@@ -63,12 +63,15 @@ export function scoreInstitutional(subnetsRaw, poolsRaw, meta = {}) {
 
   const totalEmission = subnets.reduce((sum, s) => sum + num(s.emission), 0);
 
-  const items = subnets.map(s => {
-    const netuid = s.netuid ?? s.subnet_id;
-    const pool = poolMap[netuid] || null;
-    const metrics = extractMetrics(s, pool, totalEmission);
-    return { subnet: s, pool, netuid, metrics };
-  });
+  // Exclude SN0 (root) — it's infrastructure, not a product subnet
+  const items = subnets
+    .filter(s => (s.netuid ?? s.subnet_id) !== 0)
+    .map(s => {
+      const netuid = s.netuid ?? s.subnet_id;
+      const pool = poolMap[netuid] || null;
+      const metrics = extractMetrics(s, pool, totalEmission);
+      return { subnet: s, pool, netuid, metrics };
+    });
 
   if (items.length === 0) return [];
 
