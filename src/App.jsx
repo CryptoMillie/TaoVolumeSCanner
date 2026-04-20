@@ -2,6 +2,7 @@ import { useState } from "react";
 import VolumeScanner from "./VolumeScanner.jsx";
 import SRIScanner from "./SRIScanner.jsx";
 import HealthScanner from "./HealthScanner.jsx";
+import IntelScanner from "./IntelScanner.jsx";
 
 const TAB_STYLE = (active) => ({
   background: active ? "#1818cc" : "transparent",
@@ -43,9 +44,12 @@ export default function App() {
         <button onClick={() => setTab("health")} style={TAB_STYLE(tab === "health")}>
           SUBNET HEALTH
         </button>
+        <button onClick={() => setTab("intel")} style={TAB_STYLE(tab === "intel")}>
+          INTEL FEED
+        </button>
       </div>
 
-      {tab === "volume" ? <VolumeScanner /> : tab === "sri" ? <SRIScanner /> : <HealthScanner />}
+      {tab === "volume" ? <VolumeScanner /> : tab === "sri" ? <SRIScanner /> : tab === "health" ? <HealthScanner /> : <IntelScanner />}
     </div>
   );
 }
