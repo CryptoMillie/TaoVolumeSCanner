@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { fetchAllSRIData } from "./sri/api.js";
+import { fetchAllSRIData, fetchPoolLatest, fetchSubnetMeta } from "./sri/api.js";
 import { scoreInstitutional } from "./intel/scoring.js";
 import { detectSpikes, getTopMovers } from "./intel/news.js";
 import { INST_TIER_CONFIG, INST_DIMENSION_LABELS, TOP_MOVERS_COUNT } from "./intel/constants.js";
@@ -127,19 +127,39 @@ export default function IntelScanner() {
         fetchAllSRIData(),
       ]);
 
+      // Build name lookup: "sn44" -> best name from TaoStats pools + GitHub meta
+      // Same logic as VolumeScanner — handles mechid 0 and 1
+      const pools = Array.isArray(sriData.pools) ? sriData.pools : (sriData.pools?.data || []);
+      const metaRaw = sriData.meta || {};
+      const nameMap = {};
+      pools.forEach(p => {
+        const id = p.netuid ?? p.subnet_id;
+        if (id == null) return;
+        const key = `sn${id}`;
+        if (p.name && p.name !== "Unknown") { nameMap[key] = p.name; return; }
+        const me = metaRaw[String(id)];
+        if (me?.name) nameMap[key] = me.name;
+      });
+
+      // Apply resolved names to CoinGecko data
+      const namedCgData = cgData.map(s => ({
+        ...s,
+        name: nameMap[s.symbol] || s.name,
+      }));
+
       // Volume spike detection
-      const newAlerts = detectSpikes(cgData, prevVolRef.current);
+      const newAlerts = detectSpikes(namedCgData, prevVolRef.current);
       if (newAlerts.length > 0) {
         setAlerts(prev => [...newAlerts, ...prev].slice(0, 12));
       }
 
       // Store current volumes for next comparison
       const volMap = {};
-      cgData.forEach(s => { volMap[s.id || s.symbol] = s.total_volume; });
+      namedCgData.forEach(s => { volMap[s.id || s.symbol] = s.total_volume; });
       prevVolRef.current = volMap;
 
       // News feed — top movers with summaries
-      const topMovers = getTopMovers(cgData, sriData.pools, TOP_MOVERS_COUNT);
+      const topMovers = getTopMovers(namedCgData, sriData.pools, TOP_MOVERS_COUNT);
       setMovers(topMovers);
 
       // Institutional scores
