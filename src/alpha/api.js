@@ -22,7 +22,6 @@ function setCache(key, data) {
   cache[key] = { data, ts: Date.now() };
 }
 
-// ─── Helpers ───────────────────────────────────────────────
 function delay(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
@@ -37,66 +36,46 @@ async function lcFetch(path) {
   return res.json();
 }
 
-/**
- * Fetch Bittensor ecosystem coins sorted by social metrics
- */
 export async function fetchBittensorSocial(sort = "interactions") {
   const key = `lc_bittensor_${sort}`;
   const cached = getCached(key);
   if (cached) return cached;
-
   const data = await lcFetch(`/coins/list/v2?sector=bittensor-ecosystem&sort=${sort}&limit=50`);
   setCache(key, data);
   return data;
 }
 
-/**
- * Fetch meme sector coins sorted by social metrics
- */
 export async function fetchMemeSocial(sort = "interactions") {
   const key = `lc_meme_${sort}`;
   const cached = getCached(key);
   if (cached) return cached;
-
   const data = await lcFetch(`/coins/list/v2?sector=meme&sort=${sort}&limit=20`);
   setCache(key, data);
   return data;
 }
 
-/**
- * Fetch topic summary (sentiment, galaxy score, interactions, etc.)
- */
 export async function fetchTopicSummary(topic) {
   const key = `lc_topic_${topic}`;
   const cached = getCached(key);
   if (cached) return cached;
-
   const data = await lcFetch(`/topic/${encodeURIComponent(topic)}/v1`);
   setCache(key, data);
   return data;
 }
 
-/**
- * Fetch top posts for a topic
- */
 export async function fetchTopicPosts(topic, limit = 10) {
   const key = `lc_posts_${topic}_${limit}`;
   const cached = getCached(key);
   if (cached) return cached;
-
   const data = await lcFetch(`/topic/${encodeURIComponent(topic)}/posts/v1?limit=${limit}`);
   setCache(key, data);
   return data;
 }
 
-/**
- * Fetch topic news
- */
 export async function fetchTopicNews(topic, limit = 10) {
   const key = `lc_news_${topic}_${limit}`;
   const cached = getCached(key);
   if (cached) return cached;
-
   const data = await lcFetch(`/topic/${encodeURIComponent(topic)}/news/v1?limit=${limit}`);
   setCache(key, data);
   return data;
@@ -105,7 +84,92 @@ export async function fetchTopicNews(topic, limit = 10) {
 // ─── Desearch ──────────────────────────────────────────────
 
 /**
- * Desearch AI search — returns SSE stream, we parse it into collected results
+ * Parse Desearch AI SSE stream into structured data.
+ * SSE chunks have types: Description, Queries, Sources, plus raw data arrays.
+ * We extract: tweets (with user objects), web results (title/link/snippet), sentiment.
+ */
+function parseDesearchSSE(text) {
+  const tweets = [];
+  const webResults = [];
+  const sources = [];
+  const sentiments = {};
+  let summary = "";
+
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data: ")) continue;
+    const jsonStr = trimmed.slice(6);
+    if (jsonStr === "[DONE]") break;
+
+    let parsed;
+    try { parsed = JSON.parse(jsonStr); } catch { continue; }
+    if (!parsed) continue;
+
+    // Typed chunk from AI search pipeline
+    if (parsed.type) {
+      // Skip status/progress messages
+      if (parsed.type === "Description" || parsed.type === "Queries") continue;
+
+      // Source URLs
+      if (parsed.type === "Sources" && Array.isArray(parsed.content)) {
+        sources.push(...parsed.content);
+        continue;
+      }
+
+      // Summary text
+      if (parsed.type === "Summary" && typeof parsed.content === "string") {
+        summary = parsed.content;
+        continue;
+      }
+
+      continue;
+    }
+
+    // Raw data arrays — tweets or web results
+    if (Array.isArray(parsed)) {
+      for (const item of parsed) {
+        // Tweet: has user object with username
+        if (item.user && item.user.username) {
+          tweets.push({
+            id: item.id || item.user.id,
+            username: item.user.username,
+            name: item.user.name || item.user.username,
+            url: item.user.url || `https://x.com/${item.user.username}`,
+            text: item.text || item.description || item.user.description || "",
+            created_at: item.created_at || null,
+            followers: item.user.followers_count || 0,
+          });
+          continue;
+        }
+        // Web result: has title + link + snippet
+        if (item.title && item.link) {
+          webResults.push({
+            title: item.title,
+            url: item.link,
+            snippet: item.snippet || "",
+          });
+          continue;
+        }
+      }
+      continue;
+    }
+
+    // Sentiment object: { "tweet_id": "MEDIUM", ... }
+    if (typeof parsed === "object" && !Array.isArray(parsed) && !parsed.type) {
+      const values = Object.values(parsed);
+      if (values.length > 0 && typeof values[0] === "string" &&
+          ["POSITIVE", "NEGATIVE", "MEDIUM", "NEUTRAL"].includes(values[0].toUpperCase())) {
+        Object.assign(sentiments, parsed);
+        continue;
+      }
+    }
+  }
+
+  return { tweets, webResults, sources, sentiments, summary };
+}
+
+/**
+ * AI contextual search across X and web via Desearch
  */
 export async function desearchAI(query) {
   const key = `ds_ai_${query}`;
@@ -127,25 +191,8 @@ export async function desearchAI(query) {
   });
   if (!res.ok) throw new Error(`Desearch AI ${res.status}: ${res.statusText}`);
 
-  // AI search returns SSE stream (text/event-stream) — read as text and parse
   const text = await res.text();
-  const results = [];
-
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith("data: ")) continue;
-    const jsonStr = trimmed.slice(6); // strip "data: "
-    if (jsonStr === "[DONE]") break;
-    try {
-      const parsed = JSON.parse(jsonStr);
-      if (parsed) results.push(parsed);
-    } catch {
-      // skip unparseable chunks
-    }
-  }
-
-  // Flatten into a usable structure
-  const data = { results, raw_count: results.length };
+  const data = parseDesearchSSE(text);
   setCache(key, data);
   return data;
 }
@@ -171,27 +218,7 @@ export async function desearchTwitter(query, sort = "Top", count = 15) {
 }
 
 /**
- * Web search via Desearch — uses GET
- */
-export async function desearchWeb(query) {
-  const key = `ds_web_${query}`;
-  const cached = getCached(key);
-  if (cached) return cached;
-
-  const params = new URLSearchParams({ query });
-  const url = `${DS_BASE}/web?${params}`;
-  const headers = {};
-  if (DS_KEY) headers["Authorization"] = DS_KEY;
-
-  const res = await fetch(url, { headers });
-  if (!res.ok) throw new Error(`Desearch Web ${res.status}: ${res.statusText}`);
-  const data = await res.json();
-  setCache(key, data);
-  return data;
-}
-
-/**
- * Fetch all alpha data — staggered LunarCrush calls to avoid 429 rate limits
+ * Fetch all alpha data — staggered LunarCrush, parallel Desearch
  */
 export async function fetchAllAlphaData() {
   const results = {
@@ -200,12 +227,12 @@ export async function fetchAllAlphaData() {
     taoTopic: null,
     taoPosts: null,
     taoNews: null,
-    desearchNarrative: null,
+    desearchAI: null,
     desearchTwitter: null,
     errors: [],
   };
 
-  // --- Desearch calls (no rate limit issues, fire together) ---
+  // --- Desearch calls (parallel, no rate limit issues) ---
   const dsSettled = await Promise.allSettled([
     desearchTwitter("$TAO OR bittensor subnet", "Top", 15),
     desearchAI("bittensor subnet trending alpha signals this week"),
@@ -214,10 +241,10 @@ export async function fetchAllAlphaData() {
   if (dsSettled[0].status === "fulfilled") results.desearchTwitter = dsSettled[0].value;
   else results.errors.push({ source: "desearchTwitter", error: dsSettled[0].reason?.message || "Unknown" });
 
-  if (dsSettled[1].status === "fulfilled") results.desearchNarrative = dsSettled[1].value;
-  else results.errors.push({ source: "desearchNarrative", error: dsSettled[1].reason?.message || "Unknown" });
+  if (dsSettled[1].status === "fulfilled") results.desearchAI = dsSettled[1].value;
+  else results.errors.push({ source: "desearchAI", error: dsSettled[1].reason?.message || "Unknown" });
 
-  // --- LunarCrush calls — stagger to avoid 429 ---
+  // --- LunarCrush calls — staggered, skip on 402 (paid tier required) ---
   const lcTasks = [
     { key: "bittensorCoins", fn: () => fetchBittensorSocial("interactions") },
     { key: "taoTopic", fn: () => fetchTopicSummary("bittensor") },
@@ -230,9 +257,13 @@ export async function fetchAllAlphaData() {
     try {
       results[task.key] = await task.fn();
     } catch (e) {
-      results.errors.push({ source: task.key, error: e.message });
+      // Only show as error if it's not a known 402 payment issue
+      if (e.message?.includes("402")) {
+        results.errors.push({ source: task.key, error: "Paid plan required" });
+      } else {
+        results.errors.push({ source: task.key, error: e.message });
+      }
     }
-    // 500ms gap between LunarCrush calls to stay under rate limit
     await delay(500);
   }
 
