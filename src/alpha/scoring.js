@@ -133,27 +133,49 @@ export function scoreAlphaSignals(coins) {
 export function extractNarrativeSignals(desearchData) {
   if (!desearchData) return [];
 
-  // Handle different response shapes
-  const results = desearchData.results || desearchData.data || desearchData.organic_results || [];
+  // Safely convert any value to a string
+  function str(v) {
+    if (v == null) return "";
+    if (typeof v === "string") return v;
+    if (typeof v === "object") return JSON.stringify(v);
+    return String(v);
+  }
 
-  if (Array.isArray(results)) {
-    return results.map((r, i) => ({
-      id: i,
-      title: r.title || r.text || r.content?.substring(0, 120) || "Untitled",
-      snippet: r.snippet || r.description || r.body || r.content || "",
-      url: r.url || r.link || r.href || null,
-      source: r.source || r.network || r.platform || "web",
-      timestamp: r.created_at || r.date || r.timestamp || null,
-      engagement: num(r.engagement || r.interactions || r.likes || 0),
-    }));
+  // Handle different response shapes
+  let results = desearchData.results || desearchData.data || desearchData.organic_results || [];
+
+  // If results is not an array, try to wrap it
+  if (!Array.isArray(results)) {
+    if (typeof results === "object" && results !== null) results = [results];
+    else results = [];
+  }
+
+  if (results.length > 0) {
+    return results.map((r, i) => {
+      // r could be a string (from SSE chunks)
+      if (typeof r === "string") {
+        return { id: i, title: r.substring(0, 120), snippet: r, url: null, source: "ai", timestamp: null, engagement: 0 };
+      }
+      const content = str(r.content);
+      return {
+        id: i,
+        title: str(r.title) || str(r.text) || content.substring(0, 120) || "Untitled",
+        snippet: str(r.snippet) || str(r.description) || str(r.body) || content,
+        url: r.url || r.link || r.href || null,
+        source: str(r.source) || str(r.network) || str(r.platform) || "web",
+        timestamp: r.created_at || r.date || r.timestamp || null,
+        engagement: num(r.engagement || r.interactions || r.likes || 0),
+      };
+    }).filter(s => s.snippet.length > 0 || s.title !== "Untitled");
   }
 
   // If it's a text summary from AI search
-  if (typeof desearchData === "string" || desearchData.summary) {
+  const summary = str(desearchData.summary || (typeof desearchData === "string" ? desearchData : ""));
+  if (summary) {
     return [{
       id: 0,
       title: "AI Narrative Summary",
-      snippet: desearchData.summary || desearchData,
+      snippet: summary,
       url: null,
       source: "ai",
       timestamp: null,
