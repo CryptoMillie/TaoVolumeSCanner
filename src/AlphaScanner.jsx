@@ -165,7 +165,7 @@ export default function AlphaScanner() {
   const [socialPosts, setSocialPosts] = useState([]);
   const [narrativeSignals, setNarrativeSignals] = useState([]);
   const [memeCoins, setMemeCoins] = useState([]);
-  const [aiCoins, setAiCoins] = useState([]);
+  const [dsTwitterPosts, setDsTwitterPosts] = useState([]);
   const [taoTopic, setTaoTopic] = useState(null);
   const [taoNews, setTaoNews] = useState([]);
   const [sortBy, setSortBy] = useState("composite");
@@ -190,10 +190,6 @@ export default function AlphaScanner() {
       const memes = data.memeCoins?.data || data.memeCoins || [];
       if (Array.isArray(memes)) setMemeCoins(memes.slice(0, 10));
 
-      // AI coins
-      const ai = data.aiCoins?.data || data.aiCoins || [];
-      if (Array.isArray(ai)) setAiCoins(ai.slice(0, 10));
-
       // TAO topic summary
       if (data.taoTopic) setTaoTopic(data.taoTopic?.data || data.taoTopic);
 
@@ -205,10 +201,13 @@ export default function AlphaScanner() {
       const news = data.taoNews?.data || data.taoNews || [];
       if (Array.isArray(news)) setTaoNews(news.slice(0, 8));
 
-      // Narrative signals from Desearch
+      // Desearch Twitter posts (separate feed)
+      const dsTweets = extractNarrativeSignals(data.desearchTwitter);
+      setDsTwitterPosts(dsTweets.slice(0, 10));
+
+      // Narrative signals from Desearch AI
       const dsNarrative = extractNarrativeSignals(data.desearchNarrative);
-      const dsTwitter = extractNarrativeSignals(data.desearchTwitter);
-      setNarrativeSignals([...dsNarrative, ...dsTwitter].slice(0, 15));
+      setNarrativeSignals(dsNarrative.slice(0, 15));
 
       setTs(new Date());
     } catch (e) {
@@ -319,13 +318,11 @@ export default function AlphaScanner() {
         </div>
       )}
 
-      {/* AI Sector Radar */}
-      {aiCoins.length > 0 && (showAll || panel === "social") && (
+      {/* Desearch X/Twitter Feed */}
+      {dsTwitterPosts.length > 0 && (showAll || panel === "narrative") && (
         <div style={S.section}>
-          <div style={S.sectionTitle}>{"\u{1F916}"} AI SECTOR — TRENDING BY INTERACTIONS</div>
-          <div style={{ display: "flex", gap: "8px", overflowX: "auto", paddingBottom: "4px" }}>
-            {aiCoins.map((c, i) => <MemeCard key={c.id || c.symbol || i} coin={c} />)}
-          </div>
+          <div style={S.sectionTitle}>{"\u{1D54F}"} DESEARCH X FEED — LIVE BITTENSOR CHATTER</div>
+          {dsTwitterPosts.map((s, i) => <NarrativeCard key={s.id || i} signal={s} />)}
         </div>
       )}
 
