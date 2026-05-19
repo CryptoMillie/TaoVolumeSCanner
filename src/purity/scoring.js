@@ -89,22 +89,24 @@ function estimateAgeDays(subnet) {
 /**
  * Score all subnets for purity.
  *
- * Signal 1 — Pool Size vs Emission Share (50% weight)
+ * Signal 1 — Pool Size vs Emission Share (40% base weight)
  *   Ratio = emission_share_pct / pool_size_tao
  *   Higher ratio = suspicious (small pool, disproportionate emission)
  *   Inverted for purity: lower ratio = purer
  *
- * Signal 2 — Flow Spike Recency (30% weight)
- *   Approximation: |net_flow_7d| / max(|net_flow_30d|, 1)
- *   If >0.65, most 30d flow happened recently = coordination signal
- *   Lower concentration = more organic
+ * Signal 2 — Flow Spike Recency (25% base weight)
+ *   Measures: net_flow_7d / net_flow_30d (directional, not absolute)
+ *   Values near 1.0 = most 30d inflow happened recently = coordination signal
+ *   Values near 0.23 (7/30) = uniform gradual flow = organic
+ *   Negative values or sign flips = flow reversal = neutral
  *   NOTE: True 48-72hr detection requires /subnet-tao-flow time series endpoint
  *
- * Signal 3 — Wallet Concentration (UNAVAILABLE)
+ * Signal 3 — Wallet Concentration (20% base weight — UNAVAILABLE)
  *   Requires: /staking-delegation-events filtered by subnet + 7d window
  *   Data needed: unique coldkey addresses per subnet to compute diversity ratio
+ *   Weight redistributed proportionally across S1, S2, S4 at runtime
  *
- * Signal 4 — Age vs Emission Share (20% weight)
+ * Signal 4 — Age vs Emission Share (15% base weight)
  *   New subnets (<14 days) with high emission share = suspicious
  *   Old subnets (>90 days) = lower risk baseline
  *   Score: age_factor * (1 - emission_share_pct_normalized)
@@ -139,11 +141,20 @@ export function scorePurity(subnetsRaw, poolsRaw, meta = {}) {
     // Signal 1: Emission/Pool ratio (higher = more suspicious)
     const s1_ratio = poolTao > 0 ? emissionSharePct / poolTao : (emissionSharePct > 0 ? 999 : 0);
 
-    // Signal 2: Flow concentration (higher = more spiked)
-    const absFlow30 = Math.abs(netFlow30d);
-    const absFlow7 = Math.abs(netFlow7d);
-    // What fraction of 30d absolute flow occurred in last 7d?
-    const s2_concentration = absFlow30 > 0 ? absFlow7 / absFlow30 : 0.25; // 0.25 = expected uniform
+    // Signal 2: Flow spike recency (higher = more concentrated in recent window)
+    // We care about INFLOW spikes specifically — coordinated staking pumps.
+    // If both 7d and 30d flows are positive: ratio shows how front-loaded the inflow is.
+    // If flows are in opposite directions or 30d is zero/negative: neutral (0.23 = uniform expectation).
+    let s2_concentration = 7 / 30; // ~0.23 = expected uniform baseline (neutral)
+    if (netFlow30d > 0 && netFlow7d > 0) {
+      // Both positive: what fraction of 30d inflow arrived in last 7d?
+      s2_concentration = netFlow7d / netFlow30d;
+    } else if (netFlow30d > 0 && netFlow7d <= 0) {
+      // 30d positive but 7d negative/zero: recent outflows after earlier inflows = possible dump phase
+      // Score this as moderately suspicious (above neutral but below spike)
+      s2_concentration = 0.45;
+    }
+    // If netFlow30d <= 0: no net inflows over 30d, no pump signal, stays at neutral 0.23
 
     // Signal 4: Age risk (lower age + higher emission share = more suspicious)
     // Score 0-1 where 0 = very suspicious (new + high emission), 1 = safe (old + low emission)
@@ -190,16 +201,20 @@ export function scorePurity(subnetsRaw, poolsRaw, meta = {}) {
 
     const s4_available = it.s4_ageScore !== null;
 
-    // Compute composite — S3 always unavailable, redistribute its weight proportionally
-    // Base: S1=0.40, S2=0.25, S3=0.20(unavail), S4=0.15
-    // Without S3: S1=0.50, S2=0.3125, S4=0.1875 (proportional redistribution)
+    // Compute composite — redistribute unavailable signal weights proportionally
+    // S3 is always unavailable; S4 may be unavailable if age is unknown
     let composite;
     if (s4_available) {
-      composite = s1_pct * 0.50 + s2_pct * 0.3125 + s4_pct * 0.1875;
+      // S3 unavailable: redistribute S3 weight across S1, S2, S4
+      const active = SIGNAL_WEIGHTS.S1 + SIGNAL_WEIGHTS.S2 + SIGNAL_WEIGHTS.S4;
+      composite = s1_pct * (SIGNAL_WEIGHTS.S1 / active)
+                + s2_pct * (SIGNAL_WEIGHTS.S2 / active)
+                + s4_pct * (SIGNAL_WEIGHTS.S4 / active);
     } else {
-      // Both S3 and S4 unavailable — redistribute across S1 and S2
-      // S1=0.40/0.65=0.6154, S2=0.25/0.65=0.3846
-      composite = s1_pct * 0.6154 + s2_pct * 0.3846;
+      // S3 and S4 both unavailable: redistribute across S1 and S2 only
+      const active = SIGNAL_WEIGHTS.S1 + SIGNAL_WEIGHTS.S2;
+      composite = s1_pct * (SIGNAL_WEIGHTS.S1 / active)
+                + s2_pct * (SIGNAL_WEIGHTS.S2 / active);
     }
 
     const tier = composite >= PURITY_TIERS.ORGANIC ? "organic"
@@ -222,9 +237,13 @@ export function scorePurity(subnetsRaw, poolsRaw, meta = {}) {
 
     if (s2_pct < 30) {
       const concPct = (it.s2_concentration * 100).toFixed(0);
-      signals.push(`${concPct}% of 30-day flow occurred in the last 7 days — suggests a recent coordinated staking spike rather than gradual organic accumulation.`);
+      if (it.netFlow30d > 0 && it.netFlow7d > 0) {
+        signals.push(`${concPct}% of 30-day inflow arrived in the last 7 days — suggests a recent coordinated staking spike rather than gradual organic accumulation.`);
+      } else if (it.netFlow30d > 0 && it.netFlow7d <= 0) {
+        signals.push(`Positive 30-day inflow but recent 7-day outflows — possible dump phase after earlier coordinated staking.`);
+      }
     } else if (s2_pct < 50) {
-      signals.push(`Flow is somewhat front-loaded toward recent days. Monitoring for coordination patterns.`);
+      signals.push(`Inflow pattern is somewhat front-loaded toward recent days. Monitoring for coordination patterns.`);
     }
 
     if (s4_available && s4_pct < 30) {
