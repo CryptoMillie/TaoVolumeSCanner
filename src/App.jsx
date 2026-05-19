@@ -4,6 +4,7 @@ import SRIScanner from "./SRIScanner.jsx";
 import HealthScanner from "./HealthScanner.jsx";
 import IntelScanner from "./IntelScanner.jsx";
 import AlphaScanner from "./AlphaScanner.jsx";
+import PurityScanner from "./PurityScanner.jsx";
 
 const TAB_STYLE = (active) => ({
   background: active ? "#1818cc" : "transparent",
@@ -51,9 +52,12 @@ export default function App() {
         <button onClick={() => setTab("alpha")} style={TAB_STYLE(tab === "alpha")}>
           ALPHA SIGNALS
         </button>
+        <button onClick={() => setTab("purity")} style={TAB_STYLE(tab === "purity")}>
+          PURITY SCANNER
+        </button>
       </div>
 
-      {tab === "volume" ? <VolumeScanner /> : tab === "sri" ? <SRIScanner /> : tab === "health" ? <HealthScanner /> : tab === "intel" ? <IntelScanner /> : <AlphaScanner />}
+      {tab === "volume" ? <VolumeScanner /> : tab === "sri" ? <SRIScanner /> : tab === "health" ? <HealthScanner /> : tab === "intel" ? <IntelScanner /> : tab === "alpha" ? <AlphaScanner /> : <PurityScanner />}
     </div>
   );
 }
