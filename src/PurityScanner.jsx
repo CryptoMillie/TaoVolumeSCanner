@@ -183,18 +183,25 @@ export default function PurityScanner() {
   const [freq] = useState(60);
   const timerRef = useRef();
 
+  const scanningRef = useRef(false);
   const scan = useCallback(async () => {
+    if (scanningRef.current) return; // prevent concurrent scans
+    scanningRef.current = true;
     setLoading(true);
     setErr(null);
     try {
-      const { subnets, pools, meta } = await fetchAllSRIData();
+      const [{ subnets, pools, meta }] = await Promise.all([
+        fetchAllSRIData(),
+        new Promise(r => setTimeout(r, 400)), // minimum visual feedback
+      ]);
       const results = scorePurity(subnets, pools, meta);
       setScored(results);
       setTs(new Date());
     } catch (e) {
-      setErr(e.message);
+      setErr(e.message || String(e));
     }
     setLoading(false);
+    scanningRef.current = false;
   }, []);
 
   useEffect(() => { scan(); }, []);
