@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { fetchAllSRIData } from "./sri/api.js";
+import { fetchAllSRIData, fetchColdkeyDistributionMap } from "./sri/api.js";
 import { scorePurity } from "./purity/scoring.js";
 import { PURITY_TIER_CONFIG, SIGNAL_LABELS, SIGNAL_WEIGHTS } from "./purity/constants.js";
 
@@ -83,7 +83,7 @@ function ExpandedRow({ item }) {
               <div style={{ color: "#333355", fontSize: "9px", letterSpacing: "0.1em", marginBottom: "6px" }}>SIGNAL BREAKDOWN</div>
               <SignalBar score={item.signals.s1.score} label={`S1: ${SIGNAL_LABELS.S1} (${Math.round(SIGNAL_WEIGHTS.S1 * 100)}%)`} available={true} />
               <SignalBar score={item.signals.s2.score} label={`S2: ${SIGNAL_LABELS.S2} (${Math.round(SIGNAL_WEIGHTS.S2 * 100)}%)`} available={true} />
-              <SignalBar score={0} label={`S3: ${SIGNAL_LABELS.S3} (${Math.round(SIGNAL_WEIGHTS.S3 * 100)}%)`} available={false} />
+              <SignalBar score={item.signals.s3.score || 0} label={`S3: ${SIGNAL_LABELS.S3} (${Math.round(SIGNAL_WEIGHTS.S3 * 100)}%)`} available={item.signals.s3.available} />
               <SignalBar score={item.signals.s4.score || 0} label={`S4: ${SIGNAL_LABELS.S4} (${Math.round(SIGNAL_WEIGHTS.S4 * 100)}%)`} available={item.signals.s4.available} />
             </div>
             <div style={{ minWidth: "200px" }}>
@@ -93,6 +93,9 @@ function ExpandedRow({ item }) {
                 <div><span style={{ color: "#282844" }}>Emission Share:</span> <span style={{ color: "#555577" }}>{item.emissionSharePct.toFixed(2)}%</span></div>
                 <div><span style={{ color: "#282844" }}>S1 Ratio:</span> <span style={{ color: "#555577" }}>{item.signals.s1.ratio.toFixed(4)}</span></div>
                 <div><span style={{ color: "#282844" }}>Flow Concentration:</span> <span style={{ color: "#555577" }}>{(item.signals.s2.concentration * 100).toFixed(0)}%</span></div>
+                {item.signals.s3.available && <div><span style={{ color: "#282844" }}>Unique Coldkeys:</span> <span style={{ color: "#555577" }}>{item.signals.s3.uniqueColdkeys}</span></div>}
+                {item.signals.s3.available && <div><span style={{ color: "#282844" }}>Total Registrations:</span> <span style={{ color: "#555577" }}>{item.signals.s3.totalCount}</span></div>}
+                {item.signals.s3.available && <div><span style={{ color: "#282844" }}>Diversity Ratio:</span> <span style={{ color: "#555577" }}>{item.signals.s3.diversityRatio.toFixed(3)}</span></div>}
                 <div><span style={{ color: "#282844" }}>7d Net Flow:</span> <span style={{ color: item.netFlow7d >= 0 ? "#33bb66" : "#ff4455" }}>{item.netFlow7d >= 0 ? "+" : ""}{fTao(item.netFlow7d)} TAO</span></div>
                 <div><span style={{ color: "#282844" }}>30d Net Flow:</span> <span style={{ color: item.netFlow30d >= 0 ? "#33bb66" : "#ff4455" }}>{item.netFlow30d >= 0 ? "+" : ""}{fTao(item.netFlow30d)} TAO</span></div>
                 {item.signals.s4.available && <div><span style={{ color: "#282844" }}>Age:</span> <span style={{ color: "#555577" }}>{item.signals.s4.ageDays < 1 ? "<1 day" : `${Math.round(item.signals.s4.ageDays)} days`}</span></div>}
@@ -143,9 +146,9 @@ function MethodologySection() {
             Detects subnets where the majority of positive EMA flow was built in a short burst rather than accumulated gradually. If 70%+ of a subnet's 30-day cumulative flow happened recently, that's a coordination signal. Gradual, consistent inflows = organic.
           </p>
 
-          <div style={heading}>S3: WALLET CONCENTRATION (20%) — UNAVAILABLE</div>
+          <div style={heading}>S3: WALLET CONCENTRATION (20%)</div>
           <p style={txt}>
-            <span style={{ color: "#ff4455" }}>Data not available.</span> Would count unique staking addresses in the last 7 days and score diversity ratio. Requires TaoStats /staking-delegation-events endpoint filtered by subnet with coldkey-level granularity. Weight is redistributed proportionally across S1, S2, and S4.
+            Measures coldkey diversity per subnet using TaoStats coldkey distribution data. Calculates a diversity ratio: unique_coldkeys / total_registrations. A ratio near 1.0 means every coldkey has a single registration — maximally distributed and organic. A low ratio means a few wallets control many registrations — concentrated and suspicious. If a subnet received heavy staking from only 3 wallets, that's manufactured. If it came from 400 wallets, that's organic.
           </p>
 
           <div style={heading}>S4: AGE vs EMISSION SHARE (15%)</div>
@@ -194,7 +197,15 @@ export default function PurityScanner() {
         fetchAllSRIData(),
         new Promise(r => setTimeout(r, 400)), // minimum visual feedback
       ]);
-      const results = scorePurity(subnets, pools, meta);
+      // Extract netuids from active subnets for coldkey distribution fetch
+      const subnetArr = Array.isArray(subnets) ? subnets : (subnets?.data || []);
+      const netuids = subnetArr
+        .filter(s => parseFloat(s.emission) > 0)
+        .map(s => s.netuid ?? s.subnet_id)
+        .filter(id => id != null);
+      // Fetch coldkey distribution in parallel batches
+      const coldkeyMap = await fetchColdkeyDistributionMap(netuids);
+      const results = scorePurity(subnets, pools, meta, coldkeyMap);
       setScored(results);
       setTs(new Date());
     } catch (e) {
@@ -304,7 +315,7 @@ export default function PurityScanner() {
         <span style={{ color: "#1e1e33" }}>SIGNALS:</span>
         <span style={{ color: "#282844" }}>S1 Pool/Emit {"\u00D7"}40%</span>
         <span style={{ color: "#282844" }}>S2 Flow Spike {"\u00D7"}25%</span>
-        <span style={{ color: "#1e1e33" }}>S3 Wallets {"\u00D7"}20% (n/a)</span>
+        <span style={{ color: "#282844" }}>S3 Wallets {"\u00D7"}20%</span>
         <span style={{ color: "#282844" }}>S4 Age/Emit {"\u00D7"}15%</span>
         <span style={{ color: "#1e1e33" }}>{"\u00B7"}</span>
         <span style={{ color: TC.organic.color }}>ORGANIC {"\u2265"}75</span>

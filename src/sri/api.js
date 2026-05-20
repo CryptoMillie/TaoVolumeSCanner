@@ -114,6 +114,49 @@ export async function fetchMechDataMap(subnetsRaw) {
   return map;
 }
 
+export async function fetchColdkeyDistribution(netuid) {
+  const key = `coldkey_dist_${netuid}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+
+  const data = await fetchWithAuth(
+    `https://api.taostats.io/api/subnet/distribution/coldkey/v1?netuid=${netuid}&limit=500`
+  );
+  setCache(key, data);
+  return data;
+}
+
+/**
+ * Fetch coldkey distribution for all netuids in parallel (staggered to avoid 429).
+ * Returns a map: netuid -> { uniqueColdkeys, totalCount, entries[] }
+ */
+export async function fetchColdkeyDistributionMap(netuids) {
+  const BATCH_SIZE = 10;
+  const STAGGER_MS = 300;
+  const map = {};
+
+  for (let i = 0; i < netuids.length; i += BATCH_SIZE) {
+    const batch = netuids.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map(netuid => fetchColdkeyDistribution(netuid))
+    );
+    results.forEach((result, idx) => {
+      const netuid = batch[idx];
+      if (result.status === "fulfilled") {
+        const raw = result.value;
+        const entries = Array.isArray(raw) ? raw : (raw?.data || []);
+        const uniqueColdkeys = entries.length;
+        const totalCount = entries.reduce((sum, e) => sum + (e.count || 0), 0);
+        map[netuid] = { uniqueColdkeys, totalCount, entries };
+      }
+    });
+    if (i + BATCH_SIZE < netuids.length) {
+      await new Promise(r => setTimeout(r, STAGGER_MS));
+    }
+  }
+  return map;
+}
+
 export async function fetchAllSRIData() {
   const [subnets, pools, meta] = await Promise.all([
     fetchSubnetLatest(),

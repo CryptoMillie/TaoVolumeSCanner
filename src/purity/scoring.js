@@ -76,8 +76,6 @@ function estimateAgeDays(subnet) {
   // Try block-based estimation (~12 seconds per block on Bittensor)
   const block = num(subnet.registration_block || subnet.registered_block || subnet.reg_block);
   if (block > 0) {
-    // Current Bittensor block is roughly ~4M+ as of 2025. Estimate from genesis.
-    // This is approximate — 12s per block = 7200 blocks/day
     const currentBlock = num(subnet.current_block || subnet.block);
     if (currentBlock > block) {
       return (currentBlock - block) * 12 / (60 * 60 * 24);
@@ -89,29 +87,31 @@ function estimateAgeDays(subnet) {
 /**
  * Score all subnets for purity.
  *
- * Signal 1 — Pool Size vs Emission Share (40% base weight)
+ * Signal 1 — Pool Size vs Emission Share (40% weight)
  *   Ratio = emission_share_pct / pool_size_tao
  *   Higher ratio = suspicious (small pool, disproportionate emission)
  *   Inverted for purity: lower ratio = purer
  *
- * Signal 2 — Flow Spike Recency (25% base weight)
+ * Signal 2 — Flow Spike Recency (25% weight)
  *   Measures: net_flow_7d / net_flow_30d (directional, not absolute)
  *   Values near 1.0 = most 30d inflow happened recently = coordination signal
  *   Values near 0.23 (7/30) = uniform gradual flow = organic
- *   Negative values or sign flips = flow reversal = neutral
- *   NOTE: True 48-72hr detection requires /subnet-tao-flow time series endpoint
  *
- * Signal 3 — Wallet Concentration (20% base weight — UNAVAILABLE)
- *   Requires: /staking-delegation-events filtered by subnet + 7d window
- *   Data needed: unique coldkey addresses per subnet to compute diversity ratio
- *   Weight redistributed proportionally across S1, S2, S4 at runtime
+ * Signal 3 — Wallet Concentration (20% weight)
+ *   Uses coldkey distribution from TaoStats /subnet/distribution/coldkey/v1
+ *   Diversity ratio: unique_coldkeys / total_registrations
+ *   Higher ratio = more organic, Lower ratio = concentrated = suspicious
  *
- * Signal 4 — Age vs Emission Share (15% base weight)
+ * Signal 4 — Age vs Emission Share (15% weight)
  *   New subnets (<14 days) with high emission share = suspicious
  *   Old subnets (>90 days) = lower risk baseline
- *   Score: age_factor * (1 - emission_share_pct_normalized)
+ *
+ * @param {object} subnetsRaw - Subnet data from TaoStats
+ * @param {object} poolsRaw - Pool data from TaoStats
+ * @param {object} meta - GitHub subnet metadata
+ * @param {object} coldkeyMap - Map of netuid -> { uniqueColdkeys, totalCount, entries[] }
  */
-export function scorePurity(subnetsRaw, poolsRaw, meta = {}) {
+export function scorePurity(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}) {
   const subnets = Array.isArray(subnetsRaw) ? subnetsRaw : (subnetsRaw?.data || []);
   const pools = Array.isArray(poolsRaw) ? poolsRaw : (poolsRaw?.data || []);
 
@@ -142,26 +142,32 @@ export function scorePurity(subnetsRaw, poolsRaw, meta = {}) {
     const s1_ratio = poolTao > 0 ? emissionSharePct / poolTao : (emissionSharePct > 0 ? 999 : 0);
 
     // Signal 2: Flow spike recency (higher = more concentrated in recent window)
-    // We care about INFLOW spikes specifically — coordinated staking pumps.
-    // If both 7d and 30d flows are positive: ratio shows how front-loaded the inflow is.
-    // If flows are in opposite directions or 30d is zero/negative: neutral (0.23 = uniform expectation).
     let s2_concentration = 7 / 30; // ~0.23 = expected uniform baseline (neutral)
     if (netFlow30d > 0 && netFlow7d > 0) {
-      // Both positive: what fraction of 30d inflow arrived in last 7d?
       s2_concentration = netFlow7d / netFlow30d;
     } else if (netFlow30d > 0 && netFlow7d <= 0) {
-      // 30d positive but 7d negative/zero: recent outflows after earlier inflows = possible dump phase
-      // Score this as moderately suspicious (above neutral but below spike)
       s2_concentration = 0.45;
     }
-    // If netFlow30d <= 0: no net inflows over 30d, no pump signal, stays at neutral 0.23
 
-    // Signal 4: Age risk (lower age + higher emission share = more suspicious)
-    // Score 0-1 where 0 = very suspicious (new + high emission), 1 = safe (old + low emission)
+    // Signal 3: Wallet concentration (coldkey diversity)
+    const ckData = coldkeyMap[netuid];
+    let s3_diversityRatio = null;
+    let s3_uniqueColdkeys = null;
+    let s3_totalCount = null;
+    if (ckData && ckData.uniqueColdkeys > 0 && ckData.totalCount > 0) {
+      s3_uniqueColdkeys = ckData.uniqueColdkeys;
+      s3_totalCount = ckData.totalCount;
+      // Diversity ratio: unique coldkeys / total registrations
+      // 1.0 = every coldkey has exactly 1 registration = maximally distributed
+      // Low values = few coldkeys control many registrations = concentrated
+      s3_diversityRatio = ckData.uniqueColdkeys / ckData.totalCount;
+    }
+
+    // Signal 4: Age risk
     let s4_ageScore = null;
     if (ageDays !== null) {
-      const ageFactor = Math.min(ageDays / AGE_THRESHOLDS.OLD_DAYS, 1.0); // 0-1, capped at 90 days
-      const emissionFactor = 1 - Math.min(emissionSharePct / 10, 1.0); // High emission share = lower score
+      const ageFactor = Math.min(ageDays / AGE_THRESHOLDS.OLD_DAYS, 1.0);
+      const emissionFactor = 1 - Math.min(emissionSharePct / 10, 1.0);
       s4_ageScore = ageFactor * 0.6 + emissionFactor * 0.4;
     }
 
@@ -177,6 +183,9 @@ export function scorePurity(subnetsRaw, poolsRaw, meta = {}) {
       marketCap,
       s1_ratio,
       s2_concentration,
+      s3_diversityRatio,
+      s3_uniqueColdkeys,
+      s3_totalCount,
       s4_ageScore,
       trend: flowTrend(netFlow7d, poolTao),
     };
@@ -185,7 +194,10 @@ export function scorePurity(subnetsRaw, poolsRaw, meta = {}) {
   // Collect arrays for percentile ranking
   const s1_ratios = items.map(it => it.s1_ratio);
   const s2_concentrations = items.map(it => it.s2_concentration);
+  const s3_diversities = items.filter(it => it.s3_diversityRatio !== null).map(it => it.s3_diversityRatio);
   const s4_scores = items.filter(it => it.s4_ageScore !== null).map(it => it.s4_ageScore);
+
+  const s3_available_global = s3_diversities.length > 0;
 
   const scored = items.map(it => {
     // Signal 1: INVERT percentile (lower ratio = purer = higher score)
@@ -194,28 +206,46 @@ export function scorePurity(subnetsRaw, poolsRaw, meta = {}) {
     // Signal 2: INVERT percentile (lower concentration = more organic = higher score)
     const s2_pct = 100 - percentileRank(it.s2_concentration, s2_concentrations);
 
+    // Signal 3: Direct percentile (higher diversity = more organic = higher score)
+    const s3_has_data = it.s3_diversityRatio !== null && s3_available_global;
+    const s3_pct = s3_has_data
+      ? percentileRank(it.s3_diversityRatio, s3_diversities)
+      : null;
+
     // Signal 4: Direct percentile (higher age score = safer)
     const s4_pct = it.s4_ageScore !== null
       ? percentileRank(it.s4_ageScore, s4_scores)
-      : 50; // Neutral if age unknown
+      : 50;
 
     const s4_available = it.s4_ageScore !== null;
 
     // Compute composite — redistribute unavailable signal weights proportionally
-    // S3 is always unavailable; S4 may be unavailable if age is unknown
     let composite;
-    if (s4_available) {
-      // S3 unavailable: redistribute S3 weight across S1, S2, S4
-      const active = SIGNAL_WEIGHTS.S1 + SIGNAL_WEIGHTS.S2 + SIGNAL_WEIGHTS.S4;
-      composite = s1_pct * (SIGNAL_WEIGHTS.S1 / active)
-                + s2_pct * (SIGNAL_WEIGHTS.S2 / active)
-                + s4_pct * (SIGNAL_WEIGHTS.S4 / active);
-    } else {
-      // S3 and S4 both unavailable: redistribute across S1 and S2 only
-      const active = SIGNAL_WEIGHTS.S1 + SIGNAL_WEIGHTS.S2;
-      composite = s1_pct * (SIGNAL_WEIGHTS.S1 / active)
-                + s2_pct * (SIGNAL_WEIGHTS.S2 / active);
+    const activeWeights = [];
+    const activeScores = [];
+
+    // S1 always available
+    activeWeights.push(SIGNAL_WEIGHTS.S1);
+    activeScores.push(s1_pct);
+
+    // S2 always available
+    activeWeights.push(SIGNAL_WEIGHTS.S2);
+    activeScores.push(s2_pct);
+
+    // S3 available if coldkey data exists for this subnet
+    if (s3_has_data) {
+      activeWeights.push(SIGNAL_WEIGHTS.S3);
+      activeScores.push(s3_pct);
     }
+
+    // S4 available if age could be estimated
+    if (s4_available) {
+      activeWeights.push(SIGNAL_WEIGHTS.S4);
+      activeScores.push(s4_pct);
+    }
+
+    const totalWeight = activeWeights.reduce((a, b) => a + b, 0);
+    composite = activeScores.reduce((sum, score, i) => sum + score * (activeWeights[i] / totalWeight), 0);
 
     const tier = composite >= PURITY_TIERS.ORGANIC ? "organic"
                : composite >= PURITY_TIERS.MIXED ? "mixed"
@@ -246,6 +276,12 @@ export function scorePurity(subnetsRaw, poolsRaw, meta = {}) {
       signals.push(`Inflow pattern is somewhat front-loaded toward recent days. Monitoring for coordination patterns.`);
     }
 
+    if (s3_has_data && s3_pct < 30) {
+      signals.push(`Low wallet diversity: only ${it.s3_uniqueColdkeys} unique coldkeys across ${it.s3_totalCount} registrations (ratio: ${it.s3_diversityRatio.toFixed(3)}). Staking is concentrated in few wallets — suggests manufactured demand.`);
+    } else if (s3_has_data && s3_pct < 50) {
+      signals.push(`Moderate wallet concentration: ${it.s3_uniqueColdkeys} coldkeys across ${it.s3_totalCount} registrations. Some concentration present.`);
+    }
+
     if (s4_available && s4_pct < 30) {
       const age = it.ageDays < 1 ? "less than 1 day" : `${Math.round(it.ageDays)} days`;
       signals.push(`Subnet is ${age} old with ${it.emissionSharePct.toFixed(2)}% emission share — new subnets with high emission share are higher risk for manufactured demand.`);
@@ -257,7 +293,7 @@ export function scorePurity(subnetsRaw, poolsRaw, meta = {}) {
 
     if (signals.length === 0) {
       if (tier === "organic") {
-        signals.push("All signals indicate organic staking behavior. Pool size is proportionate to emission share, flows are gradual, and no coordination patterns detected.");
+        signals.push("All signals indicate organic staking behavior. Pool size is proportionate to emission share, flows are gradual, wallet distribution is healthy, and no coordination patterns detected.");
       } else {
         signals.push("No individual signal strongly triggered. Score reflects moderate risk across multiple dimensions.");
       }
@@ -275,7 +311,13 @@ export function scorePurity(subnetsRaw, poolsRaw, meta = {}) {
       signals: {
         s1: { score: Math.round(s1_pct * 10) / 10, ratio: it.s1_ratio, breach: s1_breach },
         s2: { score: Math.round(s2_pct * 10) / 10, concentration: it.s2_concentration, breach: s2_breach },
-        s3: { available: false },
+        s3: {
+          available: s3_has_data,
+          score: s3_has_data ? Math.round(s3_pct * 10) / 10 : null,
+          uniqueColdkeys: it.s3_uniqueColdkeys,
+          totalCount: it.s3_totalCount,
+          diversityRatio: it.s3_diversityRatio,
+        },
         s4: { score: s4_available ? Math.round(s4_pct * 10) / 10 : null, ageDays: it.ageDays, available: s4_available },
       },
       explanation: signals,

@@ -1,10 +1,10 @@
 // Purity Scanner Constants — TAO Flow EMA Exploit Detection
 
-// Signal weights (base weights — S3 unavailable at runtime, redistributed in scoring.js)
+// Signal weights (all 4 signals active)
 export const SIGNAL_WEIGHTS = {
   S1: 0.40, // Pool Size vs Emission Share
   S2: 0.25, // Flow Spike Recency
-  S3: 0.20, // Wallet Concentration — UNAVAILABLE (requires /staking-delegation-events endpoint)
+  S3: 0.20, // Wallet Concentration (coldkey distribution)
   S4: 0.15, // Age vs Emission Share
 };
 
