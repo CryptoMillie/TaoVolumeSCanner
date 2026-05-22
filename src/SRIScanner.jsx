@@ -2,7 +2,49 @@ import React, { useState, useEffect, useCallback } from "react";
 import { fetchAllSRIData, fetchMechDataMap } from "./sri/api.js";
 import { scoreSubnets } from "./sri/scoring.js";
 import { evaluateFlags } from "./sri/flags.js";
-import { DIMENSION_LABELS, TIER_CONFIG, FLAG_LABELS, FLAG_CONFIG } from "./sri/constants.js";
+import { DIMENSION_LABELS, TIER_CONFIG, FLAG_LABELS, FLAG_CONFIG, RAO_PER_TAO } from "./sri/constants.js";
+
+const BLOCKS_PER_DAY = 7200;
+
+function emissionBreakdown(subnet) {
+  const emissionPerBlock = parseFloat(subnet?.emission) || 0;
+  const recycled24h = parseFloat(subnet?.recycled_24_hours) || 0;
+  const dailyEmission = emissionPerBlock * BLOCKS_PER_DAY;
+  const chainBuys = recycled24h;
+  const injected = Math.max(0, dailyEmission - chainBuys);
+  return {
+    emission: dailyEmission / RAO_PER_TAO,
+    injected: injected / RAO_PER_TAO,
+    chainBuys: chainBuys / RAO_PER_TAO,
+    chainBuyRatio: dailyEmission > 0 ? chainBuys / dailyEmission : 0,
+  };
+}
+
+function formatTao(v) {
+  if (v >= 1000) return `${(v / 1000).toFixed(1)}k`;
+  if (v >= 1) return v.toFixed(1);
+  if (v >= 0.01) return v.toFixed(2);
+  if (v > 0) return v.toFixed(3);
+  return "0";
+}
+
+function EmissionCell({ value, ratio, type }) {
+  // Color: green = healthy (low chain buy ratio), red = high chain buy ratio
+  let color;
+  if (type === "emission") {
+    color = "#7777aa";
+  } else if (type === "injected") {
+    color = ratio < 0.3 ? "#33bb66" : ratio < 0.6 ? "#ddaa00" : "#ff6644";
+  } else {
+    // chain buys: higher = more concerning
+    color = ratio < 0.1 ? "#333355" : ratio < 0.3 ? "#ddaa00" : ratio < 0.6 ? "#ff8833" : "#ff4455";
+  }
+  return (
+    <span style={{ color, fontSize: "11px", fontFamily: "inherit" }}>
+      {formatTao(value)}
+    </span>
+  );
+}
 
 function SubnetLogo({ url, name }) {
   const [errored, setErrored] = useState(false);
@@ -67,7 +109,7 @@ function ExpandedRow({ item, flags }) {
   if (!item.dimensions) {
     return (
       <tr>
-        <td colSpan={9} style={{ padding: "0" }}>
+        <td colSpan={12} style={{ padding: "0" }}>
           <div style={{ padding: "12px 18px 12px 40px", background: "#0a0a14", borderBottom: "1px solid #131326", color: "#333355", fontSize: "10px" }}>
             No scoring data — subnet has zero emissions.
           </div>
@@ -77,7 +119,7 @@ function ExpandedRow({ item, flags }) {
   }
   return (
     <tr>
-      <td colSpan={9} style={{ padding: "0" }}>
+      <td colSpan={12} style={{ padding: "0" }}>
         <div style={{ padding: "12px 18px 12px 40px", background: "#0a0a14", borderBottom: "1px solid #131326" }}>
           <div style={{ display: "flex", gap: "28px", flexWrap: "wrap" }}>
             {Object.entries(DIMENSION_LABELS).map(([key, label]) => {
@@ -107,6 +149,27 @@ function ExpandedRow({ item, flags }) {
               ))}
             </div>
           )}
+          {(() => {
+            const eb = emissionBreakdown(item.subnet);
+            if (eb.emission === 0) return null;
+            const pct = (eb.chainBuyRatio * 100).toFixed(1);
+            const barColor = eb.chainBuyRatio < 0.1 ? "#33bb66" : eb.chainBuyRatio < 0.3 ? "#ddaa00" : eb.chainBuyRatio < 0.6 ? "#ff8833" : "#ff4455";
+            return (
+              <div style={{ marginTop: "10px", display: "flex", gap: "24px", alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ color: "#282844", fontSize: "9px", letterSpacing: "0.1em" }}>EMISSION FLOW (24h):</span>
+                <span style={{ color: "#7777aa", fontSize: "10px" }}>Emitted: <span style={{ color: "#9999cc", fontWeight: 600 }}>{eb.emission.toFixed(2)}</span> TAO</span>
+                <span style={{ color: "#33bb66", fontSize: "10px" }}>Injected: <span style={{ fontWeight: 600 }}>{eb.injected.toFixed(2)}</span> TAO</span>
+                <span style={{ color: barColor, fontSize: "10px" }}>Chain Buys: <span style={{ fontWeight: 600 }}>{eb.chainBuys.toFixed(2)}</span> TAO ({pct}%)</span>
+                <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                  <div style={{ width: "60px", height: "6px", background: "#0d0d1a", borderRadius: "3px", overflow: "hidden", display: "flex" }}>
+                    <div style={{ width: `${Math.max(0, 100 - eb.chainBuyRatio * 100)}%`, height: "100%", background: "#33bb66" }} />
+                    <div style={{ width: `${Math.min(100, eb.chainBuyRatio * 100)}%`, height: "100%", background: barColor }} />
+                  </div>
+                  <span style={{ color: "#282844", fontSize: "9px" }}>INJ|CB</span>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </td>
     </tr>
@@ -165,6 +228,14 @@ function MethodologySection() {
           <div style={heading}>SCORING METHOD</div>
           <p style={txt}>
             Each metric is percentile-ranked within the active cohort (0-100). Dimension scores are the average of their metric percentiles. The composite is a weighted sum: D1{"\u00D7"}0.40 + D2{"\u00D7"}0.25 + D3{"\u00D7"}0.20 + D4{"\u00D7"}0.15.
+          </p>
+
+          <div style={heading}>EMISSION FLOW COLUMNS</div>
+          <p style={txt}>
+            <span style={dim}>EMISSION</span> — Total TAO emitted by the chain to the subnet per day (emission/block {"\u00D7"} 7,200 blocks)
+            <br /><span style={dim}>INJECTED</span> — TAO injected into the subnet's liquidity pool (capped by alpha price)
+            <br /><span style={dim}>CHAIN BUY</span> — Excess TAO used to buy alpha (then recycled). Injected + Chain Buys = Emission
+            <br />High chain-buy ratio means the alpha price is low relative to emission (price suppression). Low ratio means organic demand is absorbing emission.
           </p>
 
           <div style={heading}>TIERS</div>
@@ -289,6 +360,16 @@ export default function SRIScanner() {
               <td style={S.cell}><span style={{ color: "#1a1a2e", fontSize: "10px" }}>{"\u2014"}</span></td>
             </>
           )}
+          {(() => {
+            const eb = emissionBreakdown(s.subnet);
+            return (
+              <>
+                <td style={S.cell}><EmissionCell value={eb.emission} ratio={eb.chainBuyRatio} type="emission" /></td>
+                <td style={S.cell}><EmissionCell value={eb.injected} ratio={eb.chainBuyRatio} type="injected" /></td>
+                <td style={S.cell}><EmissionCell value={eb.chainBuys} ratio={eb.chainBuyRatio} type="chainBuys" /></td>
+              </>
+            );
+          })()}
           <td style={S.cellLeft}><FlagPills flags={flags} /></td>
         </tr>
         {isExpanded && <ExpandedRow item={s} flags={flags} />}
@@ -350,7 +431,7 @@ export default function SRIScanner() {
             <span>{"\u00B7"} {counts.flagged} flagged</span>
           </div>
 
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "800px" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "1020px" }}>
             <thead>
               <tr style={S.thead}>
                 <th style={{ ...S.thLeft, width: "36px" }}>#</th>
@@ -361,6 +442,9 @@ export default function SRIScanner() {
                 <th style={{ ...S.th, width: "70px" }}>D2 MKT</th>
                 <th style={{ ...S.th, width: "70px" }}>D3 ECON</th>
                 <th style={{ ...S.th, width: "70px" }}>D4 GOV</th>
+                <th style={{ ...S.th, width: "68px" }}>EMISSION</th>
+                <th style={{ ...S.th, width: "68px" }}>INJECTED</th>
+                <th style={{ ...S.th, width: "68px" }}>CHAIN BUY</th>
                 <th style={{ ...S.thLeft, width: "120px" }}>FLAGS</th>
               </tr>
             </thead>
@@ -368,7 +452,7 @@ export default function SRIScanner() {
               {scored.map((s, i) => renderRow(s, i, false))}
               {unscored.length > 0 && (
                 <tr>
-                  <td colSpan={9} style={{ padding: "6px 18px", background: "#08080e", borderBottom: "1px solid #0e0e18", color: "#222244", fontSize: "9px", letterSpacing: "0.1em" }}>
+                  <td colSpan={12} style={{ padding: "6px 18px", background: "#08080e", borderBottom: "1px solid #0e0e18", color: "#222244", fontSize: "9px", letterSpacing: "0.1em" }}>
                     INACTIVE SUBNETS (ZERO EMISSION)
                   </td>
                 </tr>
