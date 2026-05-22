@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { fetchAllSRIData, fetchMechDataMap } from "./sri/api.js";
+import { useSharedData } from "./DataContext.jsx";
+import { fetchMechDataMap } from "./sri/api.js";
 import { scoreHealth } from "./health/scoring.js";
 import { HEALTH_DIMENSION_LABELS, HEALTH_TIER_CONFIG } from "./health/constants.js";
 
@@ -144,6 +145,7 @@ function MethodologySection() {
 }
 
 export default function HealthScanner() {
+  const { refreshTaoStats } = useSharedData();
   const [scored, setScored] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
@@ -154,7 +156,7 @@ export default function HealthScanner() {
     setLoading(true);
     setErr(null);
     try {
-      const { subnets, pools, meta } = await fetchAllSRIData();
+      const { subnets, pools, meta } = await refreshTaoStats();
       const mechDataMap = await fetchMechDataMap(subnets);
       const results = scoreHealth(subnets, pools, meta, mechDataMap);
       setScored(results);

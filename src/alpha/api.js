@@ -264,7 +264,7 @@ export async function fetchAllAlphaData() {
         results.errors.push({ source: task.key, error: e.message });
       }
     }
-    await delay(500);
+    await delay(250);
   }
 
   return results;

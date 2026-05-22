@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { fetchAllSRIData, fetchMechDataMap } from "./sri/api.js";
+import { useSharedData } from "./DataContext.jsx";
+import { fetchMechDataMap } from "./sri/api.js";
 import { scoreSubnets } from "./sri/scoring.js";
 import { evaluateFlags } from "./sri/flags.js";
 import { DIMENSION_LABELS, TIER_CONFIG, FLAG_LABELS, FLAG_CONFIG, RAO_PER_TAO } from "./sri/constants.js";
@@ -260,6 +261,7 @@ function MethodologySection() {
 }
 
 export default function SRIScanner() {
+  const { refreshTaoStats } = useSharedData();
   const [scored, setScored] = useState([]);
   const [unscored, setUnscored] = useState([]);
   const [flagMap, setFlagMap] = useState({});
@@ -272,7 +274,7 @@ export default function SRIScanner() {
     setLoading(true);
     setErr(null);
     try {
-      const { subnets, pools, meta } = await fetchAllSRIData();
+      const { subnets, pools, meta } = await refreshTaoStats();
       const mechDataMap = await fetchMechDataMap(subnets);
       const { scored: s, unscored: u } = scoreSubnets(subnets, pools, meta, mechDataMap);
       const flags = evaluateFlags(s);

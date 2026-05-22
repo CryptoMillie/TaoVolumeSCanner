@@ -1,26 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { fetchAllSRIData, fetchPoolLatest, fetchSubnetMeta } from "./sri/api.js";
+import { useSharedData } from "./DataContext.jsx";
 import { scoreInstitutional } from "./intel/scoring.js";
 import { detectSpikes, getTopMovers } from "./intel/news.js";
 import { INST_TIER_CONFIG, INST_DIMENSION_LABELS, TOP_MOVERS_COUNT } from "./intel/constants.js";
 
 function fV(v) { return v >= 1e6 ? `${(v / 1e6).toFixed(2)}M` : v >= 1e3 ? `${(v / 1e3).toFixed(0)}K` : `${v.toFixed(0)}`; }
 function fP(v) { return (v >= 0 ? "+" : "") + v.toFixed(1) + "%"; }
-
-async function fetchCoinGeckoSubnets() {
-  const url = "https://api.coingecko.com/api/v3/coins/markets?" + new URLSearchParams({
-    vs_currency: "usd",
-    category: "bittensor-subnets",
-    order: "volume_desc",
-    per_page: "100",
-    page: "1",
-    sparkline: "false",
-    price_change_percentage: "24h,7d",
-  });
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`CoinGecko ${res.status}: ${res.statusText}`);
-  return res.json();
-}
 
 function SubnetLogo({ url, name }) {
   const [errored, setErrored] = useState(false);
@@ -108,6 +93,7 @@ function NewsFeedCard({ mover }) {
 }
 
 export default function IntelScanner() {
+  const { refreshAll, taoStats, coinGecko } = useSharedData();
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
   const [ts, setTs] = useState(null);
@@ -122,10 +108,9 @@ export default function IntelScanner() {
     setLoading(true);
     setErr(null);
     try {
-      const [cgData, sriData] = await Promise.all([
-        fetchCoinGeckoSubnets(),
-        fetchAllSRIData(),
-      ]);
+      const result = await refreshAll();
+      const cgData = result.coinGecko;
+      const sriData = result.taoStats;
 
       // Build name lookup: "sn44" -> best name from TaoStats pools + GitHub meta
       // Same logic as VolumeScanner — handles mechid 0 and 1

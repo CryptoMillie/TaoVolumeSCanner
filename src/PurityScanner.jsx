@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { fetchAllSRIData, fetchColdkeyDistributionMap } from "./sri/api.js";
+import { useSharedData } from "./DataContext.jsx";
+import { fetchColdkeyDistributionMap } from "./sri/api.js";
 import { scorePurity } from "./purity/scoring.js";
 import { PURITY_TIER_CONFIG, SIGNAL_LABELS, SIGNAL_WEIGHTS } from "./purity/constants.js";
 
@@ -174,6 +175,7 @@ function MethodologySection() {
 }
 
 export default function PurityScanner() {
+  const { refreshTaoStats } = useSharedData();
   const [scored, setScored] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
@@ -194,7 +196,7 @@ export default function PurityScanner() {
     setErr(null);
     try {
       const [{ subnets, pools, meta }] = await Promise.all([
-        fetchAllSRIData(),
+        refreshTaoStats(),
         new Promise(r => setTimeout(r, 400)), // minimum visual feedback
       ]);
       // Extract netuids from active subnets for coldkey distribution fetch

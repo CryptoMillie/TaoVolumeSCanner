@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { DataProvider } from "./DataContext.jsx";
 import VolumeScanner from "./VolumeScanner.jsx";
 import SRIScanner from "./SRIScanner.jsx";
 import HealthScanner from "./HealthScanner.jsx";
@@ -23,6 +24,7 @@ export default function App() {
   const [tab, setTab] = useState("volume");
 
   return (
+    <DataProvider>
     <div style={{ fontFamily: "'JetBrains Mono','Fira Code','Courier New',monospace", background: "#070710", minHeight: "100vh" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap');
@@ -59,5 +61,6 @@ export default function App() {
 
       {tab === "volume" ? <VolumeScanner /> : tab === "sri" ? <SRIScanner /> : tab === "health" ? <HealthScanner /> : tab === "intel" ? <IntelScanner /> : tab === "alpha" ? <AlphaScanner /> : <PurityScanner />}
     </div>
+    </DataProvider>
   );
 }

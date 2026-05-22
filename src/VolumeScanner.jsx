@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { fetchPoolLatest, fetchSubnetMeta } from "./sri/api.js";
+import { useSharedData } from "./DataContext.jsx";
 
 function lvl(v){ return v>=40?"critical":v>=20?"high":v>=10?"medium":"low"; }
 function fV(v){ return v>=1e6?`${(v/1e6).toFixed(2)}M`:v>=1e3?`${(v/1e3).toFixed(0)}K`:`${v.toFixed(0)}`; }
@@ -13,22 +13,8 @@ const LEVEL_CONFIG = {
   low:     { bg:"transparent", border:"#1e1e30", text:"#666688", badge:"#ffffff06", label:"\u00B7 LOW" },
 };
 
-async function fetchSubnets() {
-  const url = "https://api.coingecko.com/api/v3/coins/markets?" + new URLSearchParams({
-    vs_currency: "usd",
-    category: "bittensor-subnets",
-    order: "volume_desc",
-    per_page: "100",
-    page: "1",
-    sparkline: "false",
-    price_change_percentage: "24h,7d",
-  });
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`CoinGecko ${res.status}: ${res.statusText}`);
-  return res.json();
-}
-
 export default function VolumeScanner() {
+  const { forceRefreshCoinGecko, refreshTaoStats } = useSharedData();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
@@ -43,9 +29,14 @@ export default function VolumeScanner() {
   const scan = useCallback(async () => {
     setLoading(true); setErr(null);
     try {
-      const [raw, poolsRaw, metaRaw] = await Promise.all([
-        fetchSubnets(), fetchPoolLatest(), fetchSubnetMeta(),
+      // Force-refresh CoinGecko (Volume Scanner auto-refreshes frequently)
+      // TaoStats uses shared cached data, refresh if not loaded yet
+      const [raw, tsData] = await Promise.all([
+        forceRefreshCoinGecko(),
+        refreshTaoStats(),
       ]);
+      const poolsRaw = tsData.pools;
+      const metaRaw = tsData.meta;
 
       // Build name lookup: "sn44" -> best name from TaoStats pools + GitHub meta
       const pools = Array.isArray(poolsRaw) ? poolsRaw : (poolsRaw?.data || []);
