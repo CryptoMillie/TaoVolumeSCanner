@@ -131,8 +131,8 @@ export async function fetchColdkeyDistribution(netuid) {
  * Returns a map: netuid -> { uniqueColdkeys, totalCount, entries[] }
  */
 export async function fetchColdkeyDistributionMap(netuids) {
-  const BATCH_SIZE = 10;
-  const STAGGER_MS = 300;
+  const BATCH_SIZE = 25;
+  const STAGGER_MS = 200;
   const map = {};
 
   for (let i = 0; i < netuids.length; i += BATCH_SIZE) {

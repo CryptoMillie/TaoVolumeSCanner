@@ -1,4 +1,4 @@
-// Alpha Signal Scoring Engine — Social + Narrative + On-Chain composite
+// Alpha Signal Scoring Engine — CoinGecko market data composite
 
 import { ALPHA_WEIGHTS, ALPHA_TIER_THRESHOLDS } from "./constants.js";
 
@@ -16,64 +16,68 @@ function percentileRank(value, allValues) {
 }
 
 /**
- * Normalize sentiment from LunarCrush (0-100 scale, 50 = neutral)
- * Returns a -1 to +1 score
- */
-function normalizeSentiment(raw) {
-  if (raw == null) return 0;
-  return (num(raw) - 50) / 50; // -1 (bearish) to +1 (bullish)
-}
-
-/**
- * Score Bittensor ecosystem coins with social alpha metrics.
+ * Score Bittensor ecosystem coins using CoinGecko market data.
  *
- * Each coin gets:
- *   SOCIAL:    interactions + contributors (social momentum)
- *   SENTIMENT: sentiment score (bullish/bearish lean)
- *   NARRATIVE: posts_active + social_dominance (narrative density)
- *   ONCHAIN:   volume + price change (market confirmation)
+ * Dimensions (mapped from available CoinGecko fields):
+ *   MOMENTUM:  price_change_percentage_24h + price_change_percentage_7d
+ *   VOLUME:    total_volume + volume/market_cap ratio
+ *   MARKET:    market_cap + inverse market_cap_rank (lower rank = better)
+ *   ONCHAIN:   ATH proximity + 24h price range utilization
  */
 export function scoreAlphaSignals(coins) {
   if (!coins || !Array.isArray(coins) || coins.length === 0) return [];
 
   const items = coins.map(c => {
-    const interactions = num(c.interactions);
-    const contributors = num(c.contributors_active || c.contributors);
-    const sentiment = num(c.sentiment);
-    const postsActive = num(c.posts_active || c.posts);
-    const socialDom = num(c.social_dominance);
-    const volume = num(c.volume_24h || c.volume);
-    const priceChange = num(c.percent_change_24h || c.price_change_24h);
-    const galaxyScore = num(c.galaxy_score);
-    const altRank = num(c.alt_rank);
+    const volume = num(c.total_volume);
     const marketCap = num(c.market_cap);
+    const priceChange24h = num(c.price_change_percentage_24h);
+    const priceChange7d = num(c.price_change_percentage_7d_in_currency || c.price_change_percentage_7d);
+    const mcRank = num(c.market_cap_rank);
+    const athChangePct = num(c.ath_change_percentage);
+    const high24 = num(c.high_24h);
+    const low24 = num(c.low_24h);
+    const price = num(c.current_price);
+    const circSupply = num(c.circulating_supply);
+    const totalSupply = num(c.total_supply);
+
+    // Volume/MC ratio (key anomaly signal)
+    const volMcRatio = marketCap > 0 ? (volume / marketCap) * 100 : 0;
+
+    // 24h range utilization: where is price within today's range (0-1)
+    const range24h = high24 > low24 ? (price - low24) / (high24 - low24) : 0.5;
+
+    // ATH proximity (closer to ATH = stronger, convert negative % to positive proximity)
+    const athProximity = Math.max(0, 100 + athChangePct); // 0 = at ATH, 100 = no drawdown
+
+    // Inverse rank score (lower rank = higher score)
+    const rankScore = mcRank > 0 ? Math.max(0, 1000 - mcRank) : 0;
 
     return {
       raw: c,
-      symbol: c.symbol || c.s || "???",
-      name: c.name || c.n || c.symbol || "Unknown",
+      symbol: c.symbol || "???",
+      name: c.name || "Unknown",
       metrics: {
-        social_1: interactions,
-        social_2: contributors,
-        sentiment_1: sentiment,
-        sentiment_2: galaxyScore,
-        narrative_1: postsActive,
-        narrative_2: socialDom,
-        onchain_1: volume,
-        onchain_2: Math.abs(priceChange),
+        momentum_1: Math.abs(priceChange24h), // absolute momentum (direction-agnostic strength)
+        momentum_2: Math.abs(priceChange7d),
+        volume_1: volume,
+        volume_2: volMcRatio,
+        market_1: marketCap,
+        market_2: rankScore,
+        onchain_1: athProximity,
+        onchain_2: range24h * 100,
       },
       display: {
-        interactions,
-        contributors,
-        sentiment,
-        postsActive,
-        socialDom,
         volume,
-        priceChange,
-        galaxyScore,
-        altRank,
         marketCap,
-        price: num(c.close || c.price || c.current_price),
+        priceChange24h,
+        priceChange7d,
+        volMcRatio,
+        athChangePct,
+        range24h,
+        mcRank,
+        price,
+        circSupply,
+        totalSupply,
       },
     };
   });
@@ -91,33 +95,33 @@ export function scoreAlphaSignals(coins) {
       pct[k] = percentileRank(it.metrics[k], metricArrays[k]);
     });
 
-    const SOCIAL = (pct.social_1 + pct.social_2) / 2;
-    const SENTIMENT = (pct.sentiment_1 + pct.sentiment_2) / 2;
-    const NARRATIVE = (pct.narrative_1 + pct.narrative_2) / 2;
+    const MOMENTUM = (pct.momentum_1 + pct.momentum_2) / 2;
+    const VOLUME = (pct.volume_1 + pct.volume_2) / 2;
+    const MARKET = (pct.market_1 + pct.market_2) / 2;
     const ONCHAIN = (pct.onchain_1 + pct.onchain_2) / 2;
 
-    const composite = SOCIAL * ALPHA_WEIGHTS.SOCIAL
-                    + SENTIMENT * ALPHA_WEIGHTS.SENTIMENT
-                    + NARRATIVE * ALPHA_WEIGHTS.NARRATIVE
+    const composite = MOMENTUM * ALPHA_WEIGHTS.MOMENTUM
+                    + VOLUME * ALPHA_WEIGHTS.VOLUME
+                    + MARKET * ALPHA_WEIGHTS.MARKET
                     + ONCHAIN * ALPHA_WEIGHTS.ONCHAIN;
 
     const tier = composite >= ALPHA_TIER_THRESHOLDS.SIGNAL ? "signal"
                : composite >= ALPHA_TIER_THRESHOLDS.WATCH ? "watch"
                : "noise";
 
-    // Sentiment label
-    const sentVal = normalizeSentiment(it.display.sentiment);
-    const sentimentLabel = sentVal > 0.2 ? "bullish" : sentVal < -0.2 ? "bearish" : "neutral";
+    // Sentiment label derived from 24h price action
+    const sentimentLabel = it.display.priceChange24h > 5 ? "bullish"
+                         : it.display.priceChange24h < -5 ? "bearish"
+                         : "neutral";
 
     return {
       ...it.display,
       symbol: it.symbol,
       name: it.name,
-      dimensions: { SOCIAL, SENTIMENT, NARRATIVE, ONCHAIN },
+      dimensions: { MOMENTUM, VOLUME, MARKET, ONCHAIN },
       composite: Math.round(composite * 10) / 10,
       tier,
       sentimentLabel,
-      sentimentValue: sentVal,
       raw: it.raw,
     };
   });
@@ -128,12 +132,10 @@ export function scoreAlphaSignals(coins) {
 
 /**
  * Extract narrative signals from Desearch AI results.
- * Returns structured signal objects for the UI.
  */
 export function extractNarrativeSignals(desearchData) {
   if (!desearchData) return [];
 
-  // Safely convert any value to a string
   function str(v) {
     if (v == null) return "";
     if (typeof v === "string") return v;
@@ -141,10 +143,8 @@ export function extractNarrativeSignals(desearchData) {
     return String(v);
   }
 
-  // Handle different response shapes
   let results = desearchData.results || desearchData.data || desearchData.organic_results || [];
 
-  // If results is not an array, try to wrap it
   if (!Array.isArray(results)) {
     if (typeof results === "object" && results !== null) results = [results];
     else results = [];
@@ -152,7 +152,6 @@ export function extractNarrativeSignals(desearchData) {
 
   if (results.length > 0) {
     return results.map((r, i) => {
-      // r could be a string (from SSE chunks)
       if (typeof r === "string") {
         return { id: i, title: r.substring(0, 120), snippet: r, url: null, source: "ai", timestamp: null, engagement: 0 };
       }
@@ -169,7 +168,6 @@ export function extractNarrativeSignals(desearchData) {
     }).filter(s => s.snippet.length > 0 || s.title !== "Untitled");
   }
 
-  // If it's a text summary from AI search
   const summary = str(desearchData.summary || (typeof desearchData === "string" ? desearchData : ""));
   if (summary) {
     return [{
@@ -184,24 +182,4 @@ export function extractNarrativeSignals(desearchData) {
   }
 
   return [];
-}
-
-/**
- * Extract social posts from LunarCrush topic posts data.
- */
-export function extractSocialPosts(postsData) {
-  if (!postsData) return [];
-  const posts = postsData.data || postsData || [];
-  if (!Array.isArray(posts)) return [];
-
-  return posts.slice(0, 15).map((p, i) => ({
-    id: p.id || i,
-    text: p.title || p.body || p.text || "",
-    creator: p.creator_name || p.creator_display_name || p.screen_name || "Unknown",
-    network: p.network || p.type || "x",
-    interactions: num(p.interactions || p.engagements || 0),
-    sentiment: num(p.sentiment || 50),
-    timestamp: p.time ? new Date(p.time * 1000).toLocaleString() : p.created_at || null,
-    url: p.post_url || p.url || null,
-  }));
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { fetchAllAlphaData } from "./alpha/api.js";
-import { scoreAlphaSignals, extractSocialPosts } from "./alpha/scoring.js";
+import { scoreAlphaSignals } from "./alpha/scoring.js";
 import { ALPHA_TIER_CONFIG, ALPHA_DIMENSION_LABELS, SENTIMENT_COLORS } from "./alpha/constants.js";
 
 function fN(v) { return v >= 1e9 ? `${(v / 1e9).toFixed(2)}B` : v >= 1e6 ? `${(v / 1e6).toFixed(2)}M` : v >= 1e3 ? `${(v / 1e3).toFixed(0)}K` : `${v.toFixed(0)}`; }
@@ -98,40 +98,9 @@ function WebResultCard({ result }) {
   );
 }
 
-// ─── LunarCrush Post Card ──────────────────────────────────
-function SocialPostCard({ post }) {
-  const sentColor = post.sentiment > 60 ? "#33bb66" : post.sentiment < 40 ? "#ff4455" : "#ddaa00";
-  const netIcon = post.network === "reddit" ? "\u{1F4AC}" : post.network === "youtube" ? "\u{1F3AC}" : "\u{1D54F}";
-  return (
-    <div style={{
-      background: "#0b0b15", borderLeft: `3px solid ${sentColor}`,
-      borderRadius: "0 4px 4px 0", padding: "10px 14px", marginBottom: "6px",
-    }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <span style={{ fontSize: "12px" }}>{netIcon}</span>
-          <span style={{ color: "#8888cc", fontWeight: 600, fontSize: "11px" }}>@{post.creator}</span>
-          {post.interactions > 0 && (
-            <span style={{ color: "#444466", fontSize: "9px" }}>{fN(post.interactions)} engagements</span>
-          )}
-        </div>
-        <span style={{ color: "#2a2a44", fontSize: "9px" }}>{post.timestamp || ""}</span>
-      </div>
-      <p style={{ color: "#7777aa", fontSize: "11px", lineHeight: "1.6", margin: 0, wordBreak: "break-word" }}>
-        {post.text.length > 280 ? post.text.substring(0, 280) + "..." : post.text}
-      </p>
-      {post.url && (
-        <a href={post.url} target="_blank" rel="noopener noreferrer" style={{ color: "#4444aa", fontSize: "9px", textDecoration: "none" }}>
-          view post {"\u2197"}
-        </a>
-      )}
-    </div>
-  );
-}
-
-// ─── Meme Coin Card ────────────────────────────────────────
+// ─── Meme Coin Card (CoinGecko) ───────────────────────────
 function MemeCard({ coin }) {
-  const change = num(coin.percent_change_24h || coin.price_change_24h);
+  const change = num(coin.price_change_percentage_24h);
   const accentColor = change >= 0 ? "#33bb66" : "#ff4455";
   return (
     <div style={{
@@ -139,31 +108,48 @@ function MemeCard({ coin }) {
       borderRadius: "4px", padding: "10px 14px", minWidth: "200px", flex: "0 0 auto",
     }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
-        <span style={{ color: "#b0b0cc", fontWeight: 600, fontSize: "12px" }}>{coin.symbol || coin.s || "???"}</span>
+        <span style={{ color: "#b0b0cc", fontWeight: 600, fontSize: "12px" }}>{(coin.symbol || "???").toUpperCase()}</span>
         <span style={{ color: accentColor, fontSize: "11px", fontWeight: 700 }}>{fP(change)}</span>
       </div>
-      <div style={{ color: "#555577", fontSize: "10px" }}>{coin.name || coin.n || ""}</div>
+      <div style={{ color: "#555577", fontSize: "10px" }}>{coin.name || ""}</div>
       <div style={{ display: "flex", justifyContent: "space-between", marginTop: "6px", color: "#444466", fontSize: "9px" }}>
-        <span>{fN(num(coin.interactions || 0))} interactions</span>
-        <span>sent: {num(coin.sentiment || 50).toFixed(0)}</span>
+        <span>vol: {fN(num(coin.total_volume))}</span>
+        <span>mcap: {fN(num(coin.market_cap))}</span>
       </div>
+    </div>
+  );
+}
+
+// ─── Trending Coin Card (CoinGecko) ───────────────────────
+function TrendingCard({ coin }) {
+  const item = coin.item || coin;
+  const change = num(item.data?.price_change_percentage_24h?.usd || item.price_change_percentage_24h || 0);
+  const accentColor = change >= 0 ? "#33bb66" : "#ff4455";
+  return (
+    <div style={{
+      background: "#0b0b15", border: `1px solid #8855ff20`,
+      borderRadius: "4px", padding: "10px 14px", minWidth: "180px", flex: "0 0 auto",
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          {item.thumb && <img src={item.thumb} alt="" style={{ width: "16px", height: "16px", borderRadius: "50%" }} />}
+          <span style={{ color: "#b0b0cc", fontWeight: 600, fontSize: "12px" }}>{(item.symbol || "???").toUpperCase()}</span>
+        </div>
+        <span style={{ color: "#8855ff", fontSize: "9px" }}>#{item.market_cap_rank || item.score + 1 || "?"}</span>
+      </div>
+      <div style={{ color: "#555577", fontSize: "10px" }}>{item.name || ""}</div>
+      {change !== 0 && (
+        <div style={{ marginTop: "4px", color: accentColor, fontSize: "10px", fontWeight: 600 }}>{fP(change)}</div>
+      )}
     </div>
   );
 }
 
 function ErrorList({ errors }) {
   if (!errors || errors.length === 0) return null;
-  // Collapse "Paid plan required" errors into a single line
-  const paidErrors = errors.filter(e => e.error === "Paid plan required");
-  const otherErrors = errors.filter(e => e.error !== "Paid plan required");
   return (
     <div style={{ margin: "8px 18px", padding: "8px 12px", background: "#ff000f08", border: "1px solid #ff003315", borderRadius: "4px" }}>
-      {paidErrors.length > 0 && (
-        <div style={{ color: "#ff885580", fontSize: "10px", marginBottom: "2px" }}>
-          LunarCrush: {paidErrors.length} endpoint{paidErrors.length > 1 ? "s" : ""} require paid plan ({paidErrors.map(e => e.source).join(", ")})
-        </div>
-      )}
-      {otherErrors.map((e, i) => (
+      {errors.map((e, i) => (
         <div key={i} style={{ color: "#ff6655", fontSize: "10px", marginBottom: "2px" }}>
           <span style={{ color: "#ff335540" }}>{e.source}:</span> {e.error}
         </div>
@@ -176,12 +162,10 @@ export default function AlphaScanner() {
   const [loading, setLoading] = useState(false);
   const [ts, setTs] = useState(null);
   const [errors, setErrors] = useState([]);
-  // LunarCrush data
+  // CoinGecko data
   const [alphaScores, setAlphaScores] = useState([]);
-  const [socialPosts, setSocialPosts] = useState([]);
   const [memeCoins, setMemeCoins] = useState([]);
-  const [taoTopic, setTaoTopic] = useState(null);
-  const [taoNews, setTaoNews] = useState([]);
+  const [trending, setTrending] = useState([]);
   // Desearch data (structured)
   const [dsTweets, setDsTweets] = useState([]);
   const [dsWebResults, setDsWebResults] = useState([]);
@@ -211,26 +195,25 @@ export default function AlphaScanner() {
       // ─── Desearch Twitter direct search ───
       const xResults = data.desearchTwitter;
       if (xResults) {
-        // Could be array of tweets or { data: [...] }
         const tweets = Array.isArray(xResults) ? xResults : (xResults.data || xResults.results || []);
         setDsXTweets(Array.isArray(tweets) ? tweets.slice(0, 15) : []);
       }
 
-      // ─── LunarCrush data ───
-      const btCoins = data.bittensorCoins?.data || data.bittensorCoins || [];
+      // ─── CoinGecko Bittensor coins ───
+      const btCoins = data.bittensorCoins;
       if (Array.isArray(btCoins) && btCoins.length > 0) {
         setAlphaScores(scoreAlphaSignals(btCoins));
       }
 
-      const memes = data.memeCoins?.data || data.memeCoins || [];
+      // ─── CoinGecko meme coins ───
+      const memes = data.memeCoins;
       if (Array.isArray(memes)) setMemeCoins(memes.slice(0, 10));
 
-      if (data.taoTopic) setTaoTopic(data.taoTopic?.data || data.taoTopic);
-
-      setSocialPosts(extractSocialPosts(data.taoPosts));
-
-      const news = data.taoNews?.data || data.taoNews || [];
-      if (Array.isArray(news)) setTaoNews(news.slice(0, 8));
+      // ─── CoinGecko trending ───
+      if (data.trending) {
+        const trendingCoins = data.trending.coins || [];
+        setTrending(trendingCoins.slice(0, 8));
+      }
 
       setTs(new Date());
     } catch (e) {
@@ -256,7 +239,7 @@ export default function AlphaScanner() {
 
   const signalCount = alphaScores.filter(s => s.tier === "signal").length;
   const hasDsData = dsTweets.length > 0 || dsWebResults.length > 0 || dsXTweets.length > 0;
-  const hasLcData = alphaScores.length > 0 || taoTopic || socialPosts.length > 0;
+  const hasCgData = alphaScores.length > 0 || memeCoins.length > 0;
 
   const S = {
     root: { fontFamily: "'JetBrains Mono','Fira Code','Courier New',monospace", background: "#070710", color: "#b0b0cc", minHeight: "100vh", fontSize: "12px" },
@@ -286,7 +269,7 @@ export default function AlphaScanner() {
             </span>
           )}
           {hasDsData && <span style={{ background: "#4488ff15", border: "1px solid #4488ff40", color: "#4488ff", padding: "2px 8px", borderRadius: "3px", fontSize: "10px" }}>DESEARCH LIVE</span>}
-          {hasLcData && <span style={{ background: "#8855ff15", border: "1px solid #8855ff40", color: "#8855ff", padding: "2px 8px", borderRadius: "3px", fontSize: "10px" }}>LUNARCRUSH</span>}
+          {hasCgData && <span style={{ background: "#33bb6615", border: "1px solid #33bb6640", color: "#33bb66", padding: "2px 8px", borderRadius: "3px", fontSize: "10px" }}>COINGECKO</span>}
           {ts && <span style={{ color: "#2a2a44", fontSize: "10px" }}>{"\u23F1"} {ts.toLocaleTimeString()}</span>}
         </div>
         <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
@@ -305,11 +288,11 @@ export default function AlphaScanner() {
       <ErrorList errors={errors} />
 
       {/* Loading */}
-      {loading && !hasDsData && !hasLcData && (
+      {loading && !hasDsData && !hasCgData && (
         <div style={{ padding: "70px", textAlign: "center", color: "#1e1e33" }}>
           <div style={{ fontSize: "28px", animation: "pulse 1s infinite" }}>{"\u26A1"}</div>
-          <div style={{ marginTop: "12px", letterSpacing: "0.2em", fontSize: "13px" }}>SCANNING SOCIAL SIGNALS...</div>
-          <div style={{ color: "#141426", marginTop: "6px", fontSize: "10px" }}>LunarCrush + Desearch</div>
+          <div style={{ marginTop: "12px", letterSpacing: "0.2em", fontSize: "13px" }}>SCANNING ALPHA SIGNALS...</div>
+          <div style={{ color: "#141426", marginTop: "6px", fontSize: "10px" }}>CoinGecko + Desearch</div>
         </div>
       )}
 
@@ -379,24 +362,12 @@ export default function AlphaScanner() {
         </div>
       )}
 
-      {/* ═══ LUNARCRUSH — TAO SOCIAL PULSE ═══ */}
-      {taoTopic && (showAll || panel === "social") && (
+      {/* ═══ COINGECKO TRENDING ═══ */}
+      {trending.length > 0 && (showAll || panel === "social") && (
         <div style={S.section}>
-          <div style={S.sectionTitle}>{"\u25C8"} LUNARCRUSH — BITTENSOR SOCIAL PULSE</div>
-          <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
-            {[
-              { label: "SENTIMENT", value: num(taoTopic.sentiment || taoTopic.topic_sentiment).toFixed(0), color: num(taoTopic.sentiment || taoTopic.topic_sentiment) > 60 ? "#33bb66" : num(taoTopic.sentiment || taoTopic.topic_sentiment) < 40 ? "#ff4455" : "#ddaa00" },
-              { label: "GALAXY SCORE", value: num(taoTopic.galaxy_score || taoTopic.topic_galaxy_score).toFixed(0), color: "#8855ff" },
-              { label: "INTERACTIONS", value: fN(num(taoTopic.interactions || taoTopic.topic_interactions || 0)), color: "#4488ff" },
-              { label: "MENTIONS", value: fN(num(taoTopic.posts_active || taoTopic.topic_posts_active || 0)), color: "#dd44ff" },
-              { label: "CREATORS", value: fN(num(taoTopic.contributors_active || taoTopic.topic_contributors_active || 0)), color: "#33bbcc" },
-              { label: "SOCIAL DOM", value: num(taoTopic.social_dominance || taoTopic.topic_social_dominance || 0).toFixed(3) + "%", color: "#ff8833" },
-            ].map(m => (
-              <div key={m.label} style={{ background: "#0a0a14", border: "1px solid #131326", borderRadius: "4px", padding: "10px 16px", minWidth: "120px" }}>
-                <div style={{ color: "#333355", fontSize: "9px", letterSpacing: "0.1em", marginBottom: "4px" }}>{m.label}</div>
-                <div style={{ color: m.color, fontSize: "18px", fontWeight: 700 }}>{m.value}</div>
-              </div>
-            ))}
+          <div style={S.sectionTitle}>{"\u{1F525}"} COINGECKO TRENDING</div>
+          <div style={{ display: "flex", gap: "8px", overflowX: "auto", paddingBottom: "4px" }}>
+            {trending.map((c, i) => <TrendingCard key={c.item?.id || i} coin={c} />)}
           </div>
         </div>
       )}
@@ -404,50 +375,17 @@ export default function AlphaScanner() {
       {/* ═══ MEME RADAR ═══ */}
       {memeCoins.length > 0 && (showAll || panel === "social") && (
         <div style={S.section}>
-          <div style={S.sectionTitle}>{"\u{1F525}"} MEME RADAR — TRENDING BY INTERACTIONS</div>
+          <div style={S.sectionTitle}>{"\u{1F525}"} MEME RADAR — TOP BY VOLUME</div>
           <div style={{ display: "flex", gap: "8px", overflowX: "auto", paddingBottom: "4px" }}>
             {memeCoins.map((c, i) => <MemeCard key={c.id || c.symbol || i} coin={c} />)}
           </div>
         </div>
       )}
 
-      {/* ═══ LUNARCRUSH SOCIAL POSTS ═══ */}
-      {socialPosts.length > 0 && (showAll || panel === "social") && (
-        <div style={S.section}>
-          <div style={S.sectionTitle}>{"\u{1D54F}"} LUNARCRUSH — BITTENSOR TOP POSTS</div>
-          {socialPosts.map((p, i) => <SocialPostCard key={p.id || i} post={p} />)}
-        </div>
-      )}
-
-      {/* ═══ LUNARCRUSH NEWS ═══ */}
-      {taoNews.length > 0 && (showAll || panel === "narrative") && (
-        <div style={S.section}>
-          <div style={S.sectionTitle}>{"\u{1F4F0}"} LUNARCRUSH — BITTENSOR NEWS</div>
-          {taoNews.map((n, i) => (
-            <div key={i} style={{ background: "#0b0b15", borderLeft: "3px solid #4488ff", borderRadius: "0 4px 4px 0", padding: "10px 14px", marginBottom: "6px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                <span style={{ color: "#8888cc", fontWeight: 600, fontSize: "11px" }}>{n.title || n.post_title || "News"}</span>
-                <span style={{ color: "#2a2a44", fontSize: "9px" }}>{n.time ? timeAgo(n.time) : ""}</span>
-              </div>
-              {(n.description || n.body || n.post_body) && (
-                <p style={{ color: "#7777aa", fontSize: "11px", lineHeight: "1.6", margin: 0 }}>
-                  {String(n.description || n.body || n.post_body || "").substring(0, 200)}
-                </p>
-              )}
-              {(n.url || n.post_url) && (
-                <a href={n.url || n.post_url} target="_blank" rel="noopener noreferrer" style={{ color: "#4444aa", fontSize: "9px", textDecoration: "none" }}>
-                  read more {"\u2197"}
-                </a>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* ═══ ALPHA SCORE TABLE ═══ */}
       {sortedScores.length > 0 && (showAll || panel === "scores") && (
         <div style={{ ...S.section, padding: "14px 0" }}>
-          <div style={{ ...S.sectionTitle, padding: "0 18px" }}>{"\u26A1"} ALPHA SIGNAL SCORE — SOCIAL + SENTIMENT + NARRATIVE + ON-CHAIN</div>
+          <div style={{ ...S.sectionTitle, padding: "0 18px" }}>{"\u26A1"} ALPHA SIGNAL SCORE — MOMENTUM + VOLUME + MARKET + ON-CHAIN</div>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "900px" }}>
               <thead>
@@ -459,27 +397,29 @@ export default function AlphaScanner() {
                   </th>
                   <th style={S.th}>TIER</th>
                   <th style={S.th}>SENT</th>
-                  <th style={S.th} onClick={() => toggleSort("SOCIAL")}>
-                    SOCIAL {sortBy === "SOCIAL" ? (sortDir === "desc" ? "\u25BC" : "\u25B2") : ""}
+                  <th style={S.th} onClick={() => toggleSort("MOMENTUM")}>
+                    MMNTM {sortBy === "MOMENTUM" ? (sortDir === "desc" ? "\u25BC" : "\u25B2") : ""}
                   </th>
-                  <th style={S.th} onClick={() => toggleSort("SENTIMENT")}>
-                    SENTMNT {sortBy === "SENTIMENT" ? (sortDir === "desc" ? "\u25BC" : "\u25B2") : ""}
+                  <th style={S.th} onClick={() => toggleSort("VOLUME")}>
+                    VOLUME {sortBy === "VOLUME" ? (sortDir === "desc" ? "\u25BC" : "\u25B2") : ""}
                   </th>
-                  <th style={S.th} onClick={() => toggleSort("NARRATIVE")}>
-                    NARRTV {sortBy === "NARRATIVE" ? (sortDir === "desc" ? "\u25BC" : "\u25B2") : ""}
+                  <th style={S.th} onClick={() => toggleSort("MARKET")}>
+                    MARKET {sortBy === "MARKET" ? (sortDir === "desc" ? "\u25BC" : "\u25B2") : ""}
                   </th>
                   <th style={S.th} onClick={() => toggleSort("ONCHAIN")}>
                     ONCHAIN {sortBy === "ONCHAIN" ? (sortDir === "desc" ? "\u25BC" : "\u25B2") : ""}
                   </th>
                   <th style={S.th}>PRICE</th>
                   <th style={S.th}>24H</th>
+                  <th style={S.th}>VOL/MC</th>
                 </tr>
               </thead>
               <tbody>
                 {sortedScores.map((s, i) => {
                   const cfg = ALPHA_TIER_CONFIG[s.tier];
                   const rowBg = i % 2 === 0 ? "#0b0b15" : "#090912";
-                  const changeColor = s.priceChange >= 0 ? "#33bb66" : "#ff4455";
+                  const changeColor = s.priceChange24h >= 0 ? "#33bb66" : "#ff4455";
+                  const volMcColor = s.volMcRatio >= 20 ? "#ff4455" : s.volMcRatio >= 10 ? "#ff8833" : "#555577";
                   return (
                     <tr key={s.symbol + i} className="trow" style={{ background: rowBg, borderBottom: "1px solid #0e0e18" }}>
                       <td style={{ ...S.cellLeft, color: "#1e1e33" }}>{i + 1}</td>
@@ -497,26 +437,29 @@ export default function AlphaScanner() {
                       </td>
                       <td style={S.cell}><SentimentBadge label={s.sentimentLabel} /></td>
                       <td style={S.cell}>
-                        <DimensionBar value={s.dimensions.SOCIAL} color="#4488ff" />
-                        <span style={{ color: "#555577", fontSize: "10px", marginLeft: "6px" }}>{s.dimensions.SOCIAL.toFixed(0)}</span>
+                        <DimensionBar value={s.dimensions.MOMENTUM} color="#ff8833" />
+                        <span style={{ color: "#555577", fontSize: "10px", marginLeft: "6px" }}>{s.dimensions.MOMENTUM.toFixed(0)}</span>
                       </td>
                       <td style={S.cell}>
-                        <DimensionBar value={s.dimensions.SENTIMENT} color="#33bb66" />
-                        <span style={{ color: "#555577", fontSize: "10px", marginLeft: "6px" }}>{s.dimensions.SENTIMENT.toFixed(0)}</span>
+                        <DimensionBar value={s.dimensions.VOLUME} color="#4488ff" />
+                        <span style={{ color: "#555577", fontSize: "10px", marginLeft: "6px" }}>{s.dimensions.VOLUME.toFixed(0)}</span>
                       </td>
                       <td style={S.cell}>
-                        <DimensionBar value={s.dimensions.NARRATIVE} color="#dd44ff" />
-                        <span style={{ color: "#555577", fontSize: "10px", marginLeft: "6px" }}>{s.dimensions.NARRATIVE.toFixed(0)}</span>
+                        <DimensionBar value={s.dimensions.MARKET} color="#33bb66" />
+                        <span style={{ color: "#555577", fontSize: "10px", marginLeft: "6px" }}>{s.dimensions.MARKET.toFixed(0)}</span>
                       </td>
                       <td style={S.cell}>
-                        <DimensionBar value={s.dimensions.ONCHAIN} color="#ff8833" />
+                        <DimensionBar value={s.dimensions.ONCHAIN} color="#dd44ff" />
                         <span style={{ color: "#555577", fontSize: "10px", marginLeft: "6px" }}>{s.dimensions.ONCHAIN.toFixed(0)}</span>
                       </td>
                       <td style={{ ...S.cell, color: "#8888aa", fontSize: "11px" }}>
                         ${s.price > 0 ? s.price.toFixed(s.price < 1 ? 6 : 2) : "-"}
                       </td>
                       <td style={{ ...S.cell, color: changeColor, fontSize: "11px", fontWeight: 600 }}>
-                        {fP(s.priceChange)}
+                        {fP(s.priceChange24h)}
+                      </td>
+                      <td style={{ ...S.cell, color: volMcColor, fontSize: "11px" }}>
+                        {s.volMcRatio.toFixed(1)}%
                       </td>
                     </tr>
                   );
@@ -529,7 +472,7 @@ export default function AlphaScanner() {
 
       {/* Footer */}
       <div style={{ padding: "12px 18px", borderTop: "1px solid #0d0d1e", color: "#141420", fontSize: "10px", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "6px" }}>
-        <span>Data: Desearch (SN22) + LunarCrush {"\u00B7"} Alpha = Social + Sentiment + Narrative + On-Chain {"\u00B7"} Not financial advice</span>
+        <span>Data: CoinGecko (free) + Desearch (SN22) {"\u00B7"} Alpha = Momentum + Volume + Market + On-Chain {"\u00B7"} Not financial advice</span>
         <span>Crypto Millie {"\u2014"} Early Alpha Intelligence</span>
       </div>
     </div>

@@ -1,10 +1,12 @@
 // Shared data context — single fetch for TaoStats + CoinGecko, localStorage persistence
-import { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
+// + request deduplication + retry with exponential backoff
+import { createContext, useContext, useState, useCallback, useRef } from "react";
 import { fetchSubnetLatest, fetchPoolLatest, fetchSubnetMeta } from "./sri/api.js";
 
 const COINGECKO_CACHE_KEY = "tao_cg_cache";
 const TAOSTATS_CACHE_KEY = "tao_ts_cache";
 const CACHE_MAX_AGE_MS = 15 * 60 * 1000; // 15 min
+const CG_MIN_INTERVAL_MS = 60 * 1000; // 60s floor — CoinGecko free tier only updates ~60s
 
 // ─── localStorage persistence ──────────────────────────────
 function loadFromStorage(key) {
@@ -27,6 +29,21 @@ function saveToStorage(key, data) {
     localStorage.setItem(key, JSON.stringify({ data, ts: Date.now() }));
   } catch {
     // localStorage full or unavailable — non-critical
+  }
+}
+
+// ─── Retry wrapper ─────────────────────────────────────────
+async function fetchWithRetry(fetchFn, retries = 2) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await fetchFn();
+    } catch (err) {
+      if (i < retries && /429|500|502|503/.test(err.message)) {
+        await new Promise(r => setTimeout(r, 1000 * 2 ** i));
+      } else {
+        throw err;
+      }
+    }
   }
 }
 
@@ -56,41 +73,53 @@ async function fetchCoinGecko() {
   return data;
 }
 
+// ─── Request deduplication ─────────────────────────────────
+// Prevents duplicate concurrent requests for the same data
+const inFlight = {};
+
+function deduplicatedFetch(key, fetchFn) {
+  if (inFlight[key]) return inFlight[key];
+  inFlight[key] = fetchFn().finally(() => { delete inFlight[key]; });
+  return inFlight[key];
+}
+
 // ─── Context ───────────────────────────────────────────────
 const DataContext = createContext(null);
 
 export function DataProvider({ children }) {
-  // TaoStats shared data
   const [taoStats, setTaoStats] = useState(() => loadFromStorage(TAOSTATS_CACHE_KEY));
   const [coinGecko, setCoinGecko] = useState(() => loadFromStorage(COINGECKO_CACHE_KEY));
   const [loading, setLoading] = useState(false);
   const [lastFetch, setLastFetch] = useState(null);
   const fetchingRef = useRef(false);
 
-  // Fetch TaoStats data (subnet/latest + pool/latest + meta)
+  // Fetch TaoStats data (deduplicated + retry)
   const refreshTaoStats = useCallback(async () => {
-    const [subnets, pools, meta] = await Promise.all([
-      fetchSubnetLatest(),
-      fetchPoolLatest(),
-      fetchSubnetMeta(),
-    ]);
-    const data = { subnets, pools, meta };
-    setTaoStats(data);
-    saveToStorage(TAOSTATS_CACHE_KEY, data);
-    return data;
+    return deduplicatedFetch("taostats", async () => {
+      const [subnets, pools, meta] = await Promise.all([
+        fetchWithRetry(() => fetchSubnetLatest()),
+        fetchWithRetry(() => fetchPoolLatest()),
+        fetchWithRetry(() => fetchSubnetMeta()),
+      ]);
+      const data = { subnets, pools, meta };
+      setTaoStats(data);
+      saveToStorage(TAOSTATS_CACHE_KEY, data);
+      return data;
+    });
   }, []);
 
-  // Fetch CoinGecko data
+  // Fetch CoinGecko data (deduplicated + retry)
   const refreshCoinGecko = useCallback(async () => {
-    const data = await fetchCoinGecko();
-    setCoinGecko(data);
-    return data;
+    return deduplicatedFetch("coingecko", async () => {
+      const data = await fetchWithRetry(() => fetchCoinGecko());
+      setCoinGecko(data);
+      return data;
+    });
   }, []);
 
   // Refresh all shared data at once
   const refreshAll = useCallback(async () => {
     if (fetchingRef.current) {
-      // Already fetching — wait for the underlying cached calls instead of returning stale state
       const [ts, cg] = await Promise.all([refreshTaoStats(), refreshCoinGecko()]);
       return { taoStats: ts, coinGecko: cg };
     }
@@ -109,13 +138,17 @@ export function DataProvider({ children }) {
     }
   }, [refreshTaoStats, refreshCoinGecko]);
 
-  // Force-refresh CoinGecko (bypasses cache — for Volume Scanner auto-refresh)
+  // Force-refresh CoinGecko — with 60s minimum interval to avoid wasting quota
   const forceRefreshCoinGecko = useCallback(async () => {
+    if (cgCacheTs && Date.now() - cgCacheTs < CG_MIN_INTERVAL_MS) {
+      // Data is less than 60s old — return cached without re-fetching
+      return cgCache || coinGecko;
+    }
     cgCache = null;
     cgCacheTs = 0;
     const data = await refreshCoinGecko();
     return data;
-  }, [refreshCoinGecko]);
+  }, [refreshCoinGecko, coinGecko]);
 
   const value = {
     taoStats,

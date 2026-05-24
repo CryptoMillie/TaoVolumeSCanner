@@ -1,8 +1,7 @@
-// Alpha API Layer — LunarCrush v4 + Desearch with caching + rate-limit handling
+// Alpha API Layer — CoinGecko (free) + Desearch with caching + rate-limit handling
 
-import { CACHE_TTL_MS, LC_BASE, DS_BASE } from "./constants.js";
+import { CACHE_TTL_MS, DS_BASE } from "./constants.js";
 
-const LC_KEY = import.meta.env.VITE_LUNARCRUSH_API_KEY || "";
 const DS_KEY = import.meta.env.VITE_DESEARCH_API_KEY || "";
 
 // ─── Cache ─────────────────────────────────────────────────
@@ -22,61 +21,81 @@ function setCache(key, data) {
   cache[key] = { data, ts: Date.now() };
 }
 
-function delay(ms) {
-  return new Promise(r => setTimeout(r, ms));
+// ─── Retry wrapper ─────────────────────────────────────────
+async function fetchWithRetry(url, opts = {}, retries = 2) {
+  for (let i = 0; i <= retries; i++) {
+    const res = await fetch(url, opts);
+    if (res.ok) return res;
+    if (i < retries && [429, 500, 502, 503].includes(res.status)) {
+      await new Promise(r => setTimeout(r, 1000 * 2 ** i));
+    } else {
+      throw new Error(`${res.status}: ${res.statusText}`);
+    }
+  }
 }
 
-// ─── LunarCrush v4 ────────────────────────────────────────
-async function lcFetch(path) {
-  const url = `${LC_BASE}${path}`;
-  const headers = {};
-  if (LC_KEY) headers["Authorization"] = `Bearer ${LC_KEY}`;
-  const res = await fetch(url, { headers });
-  if (!res.ok) throw new Error(`LunarCrush ${res.status}: ${res.statusText}`);
+// ─── CoinGecko (replaces LunarCrush) ──────────────────────
+
+async function cgFetch(path) {
+  const url = `https://api.coingecko.com/api/v3${path}`;
+  const res = await fetchWithRetry(url);
   return res.json();
 }
 
-export async function fetchBittensorSocial(sort = "interactions") {
-  const key = `lc_bittensor_${sort}`;
+/**
+ * Fetch Bittensor ecosystem coins from CoinGecko free tier.
+ * Returns market data that we map into alpha scoring dimensions.
+ */
+export async function fetchBittensorCoins() {
+  const key = "cg_bittensor_coins";
   const cached = getCached(key);
   if (cached) return cached;
-  const data = await lcFetch(`/coins/list/v2?sector=bittensor-ecosystem&sort=${sort}&limit=50`);
+
+  const params = new URLSearchParams({
+    vs_currency: "usd",
+    category: "bittensor-subnets",
+    order: "volume_desc",
+    per_page: "100",
+    page: "1",
+    sparkline: "false",
+    price_change_percentage: "24h,7d",
+  });
+  const data = await cgFetch(`/coins/markets?${params}`);
   setCache(key, data);
   return data;
 }
 
-export async function fetchMemeSocial(sort = "interactions") {
-  const key = `lc_meme_${sort}`;
+/**
+ * Fetch trending meme coins from CoinGecko free tier.
+ */
+export async function fetchMemeCoins() {
+  const key = "cg_meme_coins";
   const cached = getCached(key);
   if (cached) return cached;
-  const data = await lcFetch(`/coins/list/v2?sector=meme&sort=${sort}&limit=20`);
+
+  const params = new URLSearchParams({
+    vs_currency: "usd",
+    category: "meme-token",
+    order: "volume_desc",
+    per_page: "20",
+    page: "1",
+    sparkline: "false",
+    price_change_percentage: "24h,7d",
+  });
+  const data = await cgFetch(`/coins/markets?${params}`);
   setCache(key, data);
   return data;
 }
 
-export async function fetchTopicSummary(topic) {
-  const key = `lc_topic_${topic}`;
+/**
+ * Fetch CoinGecko trending coins/categories for narrative signals.
+ */
+export async function fetchTrending() {
+  const key = "cg_trending";
   const cached = getCached(key);
   if (cached) return cached;
-  const data = await lcFetch(`/topic/${encodeURIComponent(topic)}/v1`);
-  setCache(key, data);
-  return data;
-}
 
-export async function fetchTopicPosts(topic, limit = 10) {
-  const key = `lc_posts_${topic}_${limit}`;
-  const cached = getCached(key);
-  if (cached) return cached;
-  const data = await lcFetch(`/topic/${encodeURIComponent(topic)}/posts/v1?limit=${limit}`);
-  setCache(key, data);
-  return data;
-}
-
-export async function fetchTopicNews(topic, limit = 10) {
-  const key = `lc_news_${topic}_${limit}`;
-  const cached = getCached(key);
-  if (cached) return cached;
-  const data = await lcFetch(`/topic/${encodeURIComponent(topic)}/news/v1?limit=${limit}`);
+  const data = await cgFetch("/search/trending");
   setCache(key, data);
   return data;
 }
@@ -85,8 +104,6 @@ export async function fetchTopicNews(topic, limit = 10) {
 
 /**
  * Parse Desearch AI SSE stream into structured data.
- * SSE chunks have types: Description, Queries, Sources, plus raw data arrays.
- * We extract: tweets (with user objects), web results (title/link/snippet), sentiment.
  */
 function parseDesearchSSE(text) {
   const tweets = [];
@@ -105,30 +122,21 @@ function parseDesearchSSE(text) {
     try { parsed = JSON.parse(jsonStr); } catch { continue; }
     if (!parsed) continue;
 
-    // Typed chunk from AI search pipeline
     if (parsed.type) {
-      // Skip status/progress messages
       if (parsed.type === "Description" || parsed.type === "Queries") continue;
-
-      // Source URLs
       if (parsed.type === "Sources" && Array.isArray(parsed.content)) {
         sources.push(...parsed.content);
         continue;
       }
-
-      // Summary text
       if (parsed.type === "Summary" && typeof parsed.content === "string") {
         summary = parsed.content;
         continue;
       }
-
       continue;
     }
 
-    // Raw data arrays — tweets or web results
     if (Array.isArray(parsed)) {
       for (const item of parsed) {
-        // Tweet: has user object with username
         if (item.user && item.user.username) {
           tweets.push({
             id: item.id || item.user.id,
@@ -141,7 +149,6 @@ function parseDesearchSSE(text) {
           });
           continue;
         }
-        // Web result: has title + link + snippet
         if (item.title && item.link) {
           webResults.push({
             title: item.title,
@@ -154,7 +161,6 @@ function parseDesearchSSE(text) {
       continue;
     }
 
-    // Sentiment object: { "tweet_id": "MEDIUM", ... }
     if (typeof parsed === "object" && !Array.isArray(parsed) && !parsed.type) {
       const values = Object.values(parsed);
       if (values.length > 0 && typeof values[0] === "string" &&
@@ -180,7 +186,7 @@ export async function desearchAI(query) {
   const headers = { "Content-Type": "application/json" };
   if (DS_KEY) headers["Authorization"] = DS_KEY;
 
-  const res = await fetch(url, {
+  const res = await fetchWithRetry(url, {
     method: "POST",
     headers,
     body: JSON.stringify({
@@ -189,7 +195,6 @@ export async function desearchAI(query) {
       count: 10,
     }),
   });
-  if (!res.ok) throw new Error(`Desearch AI ${res.status}: ${res.statusText}`);
 
   const text = await res.text();
   const data = parseDesearchSSE(text);
@@ -198,7 +203,7 @@ export async function desearchAI(query) {
 }
 
 /**
- * X/Twitter search via Desearch — uses GET with query params
+ * X/Twitter search via Desearch
  */
 export async function desearchTwitter(query, sort = "Top", count = 15) {
   const key = `ds_x_${query}_${sort}_${count}`;
@@ -210,62 +215,43 @@ export async function desearchTwitter(query, sort = "Top", count = 15) {
   const headers = {};
   if (DS_KEY) headers["Authorization"] = DS_KEY;
 
-  const res = await fetch(url, { headers });
-  if (!res.ok) throw new Error(`Desearch X ${res.status}: ${res.statusText}`);
+  const res = await fetchWithRetry(url, { headers });
   const data = await res.json();
   setCache(key, data);
   return data;
 }
 
 /**
- * Fetch all alpha data — staggered LunarCrush, parallel Desearch
+ * Fetch all alpha data — CoinGecko + Desearch in parallel
  */
 export async function fetchAllAlphaData() {
   const results = {
     bittensorCoins: null,
     memeCoins: null,
-    taoTopic: null,
-    taoPosts: null,
-    taoNews: null,
+    trending: null,
     desearchAI: null,
     desearchTwitter: null,
     errors: [],
   };
 
-  // --- Desearch calls (parallel, no rate limit issues) ---
-  const dsSettled = await Promise.allSettled([
+  // All calls in parallel — no staggering needed since we use
+  // CoinGecko (generous free tier) + Desearch (no rate limit issues)
+  const settled = await Promise.allSettled([
+    fetchBittensorCoins(),
+    fetchMemeCoins(),
+    fetchTrending(),
     desearchTwitter("$TAO OR bittensor subnet", "Top", 15),
     desearchAI("bittensor subnet trending alpha signals this week"),
   ]);
 
-  if (dsSettled[0].status === "fulfilled") results.desearchTwitter = dsSettled[0].value;
-  else results.errors.push({ source: "desearchTwitter", error: dsSettled[0].reason?.message || "Unknown" });
-
-  if (dsSettled[1].status === "fulfilled") results.desearchAI = dsSettled[1].value;
-  else results.errors.push({ source: "desearchAI", error: dsSettled[1].reason?.message || "Unknown" });
-
-  // --- LunarCrush calls — staggered, skip on 402 (paid tier required) ---
-  const lcTasks = [
-    { key: "bittensorCoins", fn: () => fetchBittensorSocial("interactions") },
-    { key: "taoTopic", fn: () => fetchTopicSummary("bittensor") },
-    { key: "memeCoins", fn: () => fetchMemeSocial("interactions") },
-    { key: "taoPosts", fn: () => fetchTopicPosts("bittensor", 15) },
-    { key: "taoNews", fn: () => fetchTopicNews("bittensor", 10) },
-  ];
-
-  for (const task of lcTasks) {
-    try {
-      results[task.key] = await task.fn();
-    } catch (e) {
-      // Only show as error if it's not a known 402 payment issue
-      if (e.message?.includes("402")) {
-        results.errors.push({ source: task.key, error: "Paid plan required" });
-      } else {
-        results.errors.push({ source: task.key, error: e.message });
-      }
+  const keys = ["bittensorCoins", "memeCoins", "trending", "desearchTwitter", "desearchAI"];
+  settled.forEach((result, i) => {
+    if (result.status === "fulfilled") {
+      results[keys[i]] = result.value;
+    } else {
+      results.errors.push({ source: keys[i], error: result.reason?.message || "Unknown" });
     }
-    await delay(250);
-  }
+  });
 
   return results;
 }

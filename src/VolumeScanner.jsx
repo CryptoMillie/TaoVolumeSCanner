@@ -134,7 +134,6 @@ export default function VolumeScanner() {
             </div>
             {auto && (
               <select value={freq} onChange={e=>setFreq(+e.target.value)} style={S.select}>
-                <option value={30}>30s</option>
                 <option value={60}>60s</option>
                 <option value={120}>2m</option>
                 <option value={300}>5m</option>
