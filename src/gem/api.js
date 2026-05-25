@@ -47,38 +47,58 @@ function parseGitHubUrl(url) {
 }
 
 /**
- * Fetch 7-day commit count for a single GitHub repo.
- * Returns count of commits in the last 7 days, or -1 if rate limited.
+ * Fetch 7-day commit count for a single GitHub repo using the participation stats endpoint.
+ * Returns the most recent week's total commits (all contributors), or -1 if rate limited.
+ *
+ * Uses GET /repos/{owner}/{repo}/stats/participation which returns { all: number[], owner: number[] }
+ * where each array has 52 weekly totals, index 51 = most recent week.
+ * GitHub may return 202 (computing stats) on first request — we retry once after a short delay.
  */
 async function fetchRepoCommits7d(owner, repo) {
   const cacheKey = `gh_commits_${owner}_${repo}`;
   const cached = getCached(cacheKey);
   if (cached !== null) return cached;
 
-  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const url = `https://api.github.com/repos/${owner}/${repo}/commits?per_page=100&since=${since}`;
+  const url = `https://api.github.com/repos/${owner}/${repo}/stats/participation`;
 
-  const res = await fetch(url, {
-    headers: { Accept: "application/vnd.github.v3+json" },
-    redirect: "follow",
-  });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetch(url, {
+      headers: { Accept: "application/vnd.github.v3+json" },
+      redirect: "follow",
+    });
 
-  if (res.status === 404 || res.status === 451) {
-    setCache(cacheKey, 0);
-    return 0;
-  }
-  if (res.status === 403 || res.status === 429) {
-    return getCached(cacheKey) ?? -1;
-  }
-  if (!res.ok) {
-    setCache(cacheKey, 0);
-    return 0;
+    if (res.status === 202) {
+      // GitHub is computing stats — wait and retry once
+      if (attempt === 0) {
+        await new Promise(r => setTimeout(r, 1500));
+        continue;
+      }
+      // Still computing after retry — return cached or -1
+      return getCached(cacheKey) ?? -1;
+    }
+    if (res.status === 404 || res.status === 451) {
+      setCache(cacheKey, 0);
+      return 0;
+    }
+    if (res.status === 403 || res.status === 429) {
+      return getCached(cacheKey) ?? -1;
+    }
+    if (!res.ok) {
+      setCache(cacheKey, 0);
+      return 0;
+    }
+
+    const data = await res.json();
+    const allWeeks = data?.all;
+    // Last element = most recent week's total commits across all contributors
+    const count = Array.isArray(allWeeks) && allWeeks.length > 0
+      ? allWeeks[allWeeks.length - 1]
+      : 0;
+    setCache(cacheKey, count);
+    return count;
   }
 
-  const data = await res.json();
-  const count = Array.isArray(data) ? data.length : 0;
-  setCache(cacheKey, count);
-  return count;
+  return getCached(cacheKey) ?? 0;
 }
 
 /**
@@ -129,8 +149,8 @@ async function fetchOrgCommits7d(owner) {
     return { total: 0, repos: [] };
   }
 
-  // Limit to top 20 most recently pushed repos to avoid rate limit exhaustion
-  const reposToCheck = repos.slice(0, 20);
+  // Check top 30 most recently pushed repos (participation endpoint is 1 call each, no pagination)
+  const reposToCheck = repos.slice(0, 30);
   let total = 0;
   let rateLimited = false;
   const repoBreakdown = [];
