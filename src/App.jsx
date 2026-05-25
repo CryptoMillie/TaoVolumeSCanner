@@ -6,6 +6,7 @@ import HealthScanner from "./HealthScanner.jsx";
 import IntelScanner from "./IntelScanner.jsx";
 import AlphaScanner from "./AlphaScanner.jsx";
 import PurityScanner from "./PurityScanner.jsx";
+import GemScanner from "./GemScanner.jsx";
 
 const TAB_STYLE = (active) => ({
   background: active ? "#1818cc" : "transparent",
@@ -57,9 +58,12 @@ export default function App() {
         <button onClick={() => setTab("purity")} style={TAB_STYLE(tab === "purity")}>
           PURITY SCANNER
         </button>
+        <button onClick={() => setTab("gem")} style={TAB_STYLE(tab === "gem")}>
+          GEM SCAN {"\u{1F48E}"}
+        </button>
       </div>
 
-      {tab === "volume" ? <VolumeScanner /> : tab === "sri" ? <SRIScanner /> : tab === "health" ? <HealthScanner /> : tab === "intel" ? <IntelScanner /> : tab === "alpha" ? <AlphaScanner /> : <PurityScanner />}
+      {tab === "volume" ? <VolumeScanner /> : tab === "sri" ? <SRIScanner /> : tab === "health" ? <HealthScanner /> : tab === "intel" ? <IntelScanner /> : tab === "alpha" ? <AlphaScanner /> : tab === "purity" ? <PurityScanner /> : <GemScanner />}
     </div>
     </DataProvider>
   );
