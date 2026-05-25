@@ -8,22 +8,28 @@ function fN(v) { return v >= 1e9 ? `${(v / 1e9).toFixed(2)}B` : v >= 1e6 ? `${(v
 function fP(v) { return (v >= 0 ? "+" : "") + v.toFixed(1) + "%"; }
 
 // ─── SVG Bubble Scatter Plot ───────────────────────────────
+// Deterministic hash for consistent jitter per subnet
+function hashJitter(netuid) {
+  const x = Math.sin(netuid * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x); // 0..1
+}
+
 function BubbleChart({ data, selected, onSelect, width = 800, height = 480 }) {
-  const pad = { top: 40, right: 30, bottom: 50, left: 70 };
+  const pad = { top: 44, right: 40, bottom: 54, left: 75 };
   const cw = width - pad.left - pad.right;
   const ch = height - pad.top - pad.bottom;
 
   if (!data || data.length === 0) return null;
 
-  // X: commits (linear), Y: market cap (log scale)
+  // X: commits (linear with padding), Y: market cap (log scale)
   const maxCommits = Math.max(...data.map(d => d.commits7d), 1);
   const mcaps = data.filter(d => d.marketCap > 0).map(d => d.marketCap);
   const minMcap = mcaps.length > 0 ? Math.min(...mcaps) : 1;
   const maxMcap = mcaps.length > 0 ? Math.max(...mcaps) : 1e6;
-  const logMin = Math.log10(Math.max(minMcap * 0.5, 1));
-  const logMax = Math.log10(maxMcap * 2);
+  const logMin = Math.log10(Math.max(minMcap * 0.3, 1));
+  const logMax = Math.log10(maxMcap * 3);
 
-  // Medians for quadrant lines
+  // Medians for quadrant lines — non-zero only
   const nonZeroCommits = data.filter(d => d.commits7d > 0).map(d => d.commits7d);
   const nonZeroMcaps = data.filter(d => d.marketCap > 0).map(d => d.marketCap);
   const medCommits = nonZeroCommits.length > 0
@@ -33,15 +39,25 @@ function BubbleChart({ data, selected, onSelect, width = 800, height = 480 }) {
     ? [...nonZeroMcaps].sort((a, b) => a - b)[Math.floor(nonZeroMcaps.length / 2)]
     : Math.sqrt(minMcap * maxMcap);
 
-  const xScale = (v) => pad.left + (v / (maxCommits * 1.15)) * cw;
+  // Reserve left ~8% of chart width as a "zero zone" column for 0-commit subnets
+  const zeroZoneWidth = cw * 0.06;
+  const activeWidth = cw - zeroZoneWidth;
+
+  const xScale = (v, netuid) => {
+    if (v === 0) {
+      // Spread 0-commit bubbles with deterministic jitter within the zero zone
+      return pad.left + 4 + hashJitter(netuid) * (zeroZoneWidth - 8);
+    }
+    return pad.left + zeroZoneWidth + (v / (maxCommits * 1.1)) * activeWidth;
+  };
   const yScale = (v) => {
     const log = Math.log10(Math.max(v, 1));
     return pad.top + ch - ((log - logMin) / (logMax - logMin)) * ch;
   };
 
-  // Bubble size: vol/mc ratio mapped to radius 4-24px
+  // Bubble size: vol/mc ratio mapped to radius 3-18px (smaller to reduce clutter)
   const maxVolMc = Math.max(...data.map(d => d.volMcRatio), 1);
-  const rScale = (v) => 4 + (v / maxVolMc) * 20;
+  const rScale = (v) => 3 + (v / maxVolMc) * 15;
 
   // Tier color
   const tierColor = (tier) => GEM_TIER_CONFIG[tier]?.color || "#555577";
@@ -63,8 +79,11 @@ function BubbleChart({ data, selected, onSelect, width = 800, height = 480 }) {
   }
 
   // Quadrant line positions
-  const qx = xScale(medCommits);
+  const qx = xScale(medCommits, -1);
   const qy = yScale(medMcap);
+
+  // Zero zone separator
+  const zeroLineX = pad.left + zeroZoneWidth;
 
   const [hover, setHover] = useState(null);
 
@@ -75,17 +94,21 @@ function BubbleChart({ data, selected, onSelect, width = 800, height = 480 }) {
         <line key={`yg${v}`} x1={pad.left} x2={width - pad.right} y1={yScale(v)} y2={yScale(v)} stroke="#111122" strokeWidth="1" />
       ))}
       {xTicks.map(v => (
-        <line key={`xg${v}`} x1={xScale(v)} x2={xScale(v)} y1={pad.top} y2={height - pad.bottom} stroke="#111122" strokeWidth="1" />
+        <line key={`xg${v}`} x1={xScale(v, -1)} x2={xScale(v, -1)} y1={pad.top} y2={height - pad.bottom} stroke="#111122" strokeWidth="1" />
       ))}
+
+      {/* Zero zone separator — faint line between 0-commit zone and active zone */}
+      <line x1={zeroLineX} x2={zeroLineX} y1={pad.top} y2={height - pad.bottom} stroke="#1a1a2e" strokeWidth="1" strokeDasharray="3,6" />
+      <text x={pad.left + zeroZoneWidth / 2} y={pad.top - 6} fill="#222244" fontSize="8" fontFamily="inherit" textAnchor="middle">0 COMMITS</text>
 
       {/* Quadrant dividers */}
       <line x1={qx} x2={qx} y1={pad.top} y2={height - pad.bottom} stroke="#222244" strokeWidth="1" strokeDasharray="6,4" />
       <line x1={pad.left} x2={width - pad.right} y1={qy} y2={qy} stroke="#222244" strokeWidth="1" strokeDasharray="6,4" />
 
       {/* Quadrant labels */}
-      <text x={pad.left + 8} y={pad.top + 16} fill={QUADRANTS.topLeft.color} fontSize="10" fontFamily="inherit" opacity="0.6">{QUADRANTS.topLeft.label}</text>
+      <text x={qx - 6} y={pad.top + 16} fill={QUADRANTS.topLeft.color} fontSize="10" fontFamily="inherit" textAnchor="end" opacity="0.6">{QUADRANTS.topLeft.label}</text>
       <text x={width - pad.right - 8} y={pad.top + 16} fill={QUADRANTS.topRight.color} fontSize="10" fontFamily="inherit" textAnchor="end" opacity="0.6">{QUADRANTS.topRight.label}</text>
-      <text x={pad.left + 8} y={height - pad.bottom - 8} fill={QUADRANTS.bottomLeft.color} fontSize="10" fontFamily="inherit" opacity="0.6">{QUADRANTS.bottomLeft.label}</text>
+      <text x={qx - 6} y={height - pad.bottom - 8} fill={QUADRANTS.bottomLeft.color} fontSize="10" fontFamily="inherit" textAnchor="end" opacity="0.6">{QUADRANTS.bottomLeft.label}</text>
       <text x={width - pad.right - 8} y={height - pad.bottom - 8} fill={QUADRANTS.bottomRight.color} fontSize="10" fontFamily="inherit" textAnchor="end" opacity="0.8" fontWeight="700">{QUADRANTS.bottomRight.label}</text>
 
       {/* Axes */}
@@ -103,16 +126,16 @@ function BubbleChart({ data, selected, onSelect, width = 800, height = 480 }) {
       </text>
 
       {/* X axis labels */}
-      {xTicks.map(v => (
-        <text key={`xl${v}`} x={xScale(v)} y={height - pad.bottom + 16} fill="#333355" fontSize="9" fontFamily="inherit" textAnchor="middle">{v}</text>
+      {xTicks.filter(v => v > 0).map(v => (
+        <text key={`xl${v}`} x={xScale(v, -1)} y={height - pad.bottom + 16} fill="#333355" fontSize="9" fontFamily="inherit" textAnchor="middle">{v}</text>
       ))}
-      <text x={pad.left + cw / 2} y={height - 8} fill="#333355" fontSize="10" fontFamily="inherit" textAnchor="middle">
+      <text x={pad.left + zeroZoneWidth + activeWidth / 2} y={height - 8} fill="#333355" fontSize="10" fontFamily="inherit" textAnchor="middle">
         7-Day Commit Count
       </text>
 
-      {/* Bubbles */}
-      {data.map((d, i) => {
-        const cx = xScale(d.commits7d);
+      {/* Bubbles — render 0-commit (gray) first so active bubbles draw on top */}
+      {[...data].sort((a, b) => a.commits7d - b.commits7d).map((d) => {
+        const cx = xScale(d.commits7d, d.netuid);
         const cy = yScale(Math.max(d.marketCap, 1));
         const r = rScale(d.volMcRatio);
         const color = tierColor(d.tier);
@@ -150,7 +173,7 @@ function BubbleChart({ data, selected, onSelect, width = 800, height = 480 }) {
       {hover != null && (() => {
         const d = data.find(d => d.netuid === hover);
         if (!d) return null;
-        const tx = Math.min(xScale(d.commits7d) + 12, width - 210);
+        const tx = Math.min(xScale(d.commits7d, d.netuid) + 12, width - 210);
         const ty = Math.max(yScale(Math.max(d.marketCap, 1)) - 80, pad.top);
         const cfg = GEM_TIER_CONFIG[d.tier];
         const signal = SIGNAL_LINES[d.quadrant] || "";
@@ -228,7 +251,11 @@ function DetailCard({ item }) {
 
 // ─── Gem Leaderboard ───────────────────────────────────────
 function GemLeaderboard({ data }) {
-  const gems = data.filter(d => d.quadrant === "gem").sort((a, b) => b.gemScore - a.gemScore).slice(0, 10);
+  // Only show subnets that are ACTUALLY shipping code (commits > 0) AND in gem quadrant
+  const gems = data
+    .filter(d => d.quadrant === "gem" && d.commits7d > 0)
+    .sort((a, b) => b.gemScore - a.gemScore)
+    .slice(0, 10);
   if (gems.length === 0) return null;
 
   return (

@@ -18,8 +18,13 @@ function percentileRank(value, allValues) {
 /**
  * Determine quadrant for a subnet based on commit count and market cap
  * relative to the cohort medians.
+ * Subnets with 0 commits can ONLY be dormant or overhyped — never gem/established.
  */
 function getQuadrant(commits7d, marketCap, medianCommits, medianMcap) {
+  // Zero commits = no dev activity, cannot be gem or established
+  if (commits7d === 0) {
+    return marketCap >= medianMcap ? "overhyped" : "dormant";
+  }
   const highDev = commits7d >= medianCommits;
   const highMcap = marketCap >= medianMcap;
   if (highDev && highMcap) return "established";
@@ -37,13 +42,6 @@ function median(arr) {
 
 /**
  * Score all subnets with Gem Score.
- *
- * @param {Array} subnets - TaoStats subnet data
- * @param {Array} pools - TaoStats pool data
- * @param {Object} meta - GitHub subnet metadata
- * @param {Object} githubMap - Map<netuid, { commits7d, owner, repo, repoUrl }>
- * @param {Array} coinGecko - CoinGecko market data
- * @returns {Array} Scored subnet objects sorted by Gem Score desc
  */
 export function scoreGems(subnets, pools, meta, githubMap, coinGecko) {
   const subnetArr = Array.isArray(subnets) ? subnets : (subnets?.data || []);
@@ -73,12 +71,13 @@ export function scoreGems(subnets, pools, meta, githubMap, coinGecko) {
     const cgKey = `sn${netuid}`;
     const cgData = cgMap[cgKey];
 
+    // Name resolution: meta -> pool -> fallback
     const name = metaEntry.name || pool?.name || `Subnet ${netuid}`;
     const logo = metaEntry.image_url || null;
 
     // Dev metrics
     const commits7d = ghData ? ghData.commits7d : 0;
-    const hasRepo = !!ghData;
+    const hasRepo = !!(ghData || metaEntry.github);
     const rateLimited = ghData?.rateLimited || false;
     const repoUrl = ghData?.repoUrl || metaEntry.github || "";
 
@@ -109,21 +108,29 @@ export function scoreGems(subnets, pools, meta, githubMap, coinGecko) {
       poolTao,
       volMcRatio,
     };
-  }).filter(item => item.marketCap > 0 || item.commits7d > 0); // Exclude subnets with zero data
+  }).filter(item => item.marketCap > 0 || item.commits7d > 0);
 
   if (items.length === 0) return [];
 
-  // Calculate percentile ranks
+  // Separate subnets with actual commits for proper percentile calculation
   const allCommits = items.map(it => it.commits7d);
   const allMcaps = items.map(it => it.marketCap);
 
-  // Medians for quadrant classification
-  const medCommits = median(allCommits.filter(c => c > 0)); // median of non-zero
+  // Medians for quadrant classification — use non-zero values only
+  const nonZeroCommits = allCommits.filter(c => c > 0);
+  const medCommits = nonZeroCommits.length > 0 ? median(nonZeroCommits) : 1;
   const medMcap = median(allMcaps.filter(m => m > 0));
 
   const scored = items.map(it => {
-    // Dev Score: percentile rank of commits (higher = better)
-    const devScore = percentileRank(it.commits7d, allCommits);
+    // Dev Score: 0 commits = 0 dev score, otherwise percentile within non-zero cohort
+    let devScore;
+    if (it.commits7d === 0) {
+      devScore = 0;
+    } else if (nonZeroCommits.length <= 1) {
+      devScore = 50;
+    } else {
+      devScore = percentileRank(it.commits7d, nonZeroCommits);
+    }
 
     // Value Score: INVERSE percentile rank of market cap (lower MC = higher score)
     const valueScore = 100 - percentileRank(it.marketCap, allMcaps);
@@ -133,11 +140,16 @@ export function scoreGems(subnets, pools, meta, githubMap, coinGecko) {
       (devScore * GEM_WEIGHTS.DEV + valueScore * GEM_WEIGHTS.VALUE) * 10
     ) / 10;
 
-    // Tier
-    const tier = gemScore >= GEM_TIER_THRESHOLDS.GEM ? "gem"
-               : gemScore >= GEM_TIER_THRESHOLDS.MODERATE ? "moderate"
-               : gemScore >= GEM_TIER_THRESHOLDS.MIXED ? "mixed"
-               : "gray";
+    // Tier — 0 commits caps you at "mixed" regardless of value score
+    let tier;
+    if (it.commits7d === 0) {
+      tier = "gray";
+    } else {
+      tier = gemScore >= GEM_TIER_THRESHOLDS.GEM ? "gem"
+           : gemScore >= GEM_TIER_THRESHOLDS.MODERATE ? "moderate"
+           : gemScore >= GEM_TIER_THRESHOLDS.MIXED ? "mixed"
+           : "gray";
+    }
 
     // Quadrant
     const quadrant = getQuadrant(it.commits7d, it.marketCap, medCommits, medMcap);

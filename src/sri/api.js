@@ -65,12 +65,13 @@ export async function fetchSubnetMeta() {
     );
     if (!res.ok) throw new Error(`GitHub ${res.status}`);
     const raw = await res.json();
-    // Build lookup: netuid (number) -> { name, image_url }
+    // Build lookup: netuid (number) -> { name, image_url, github }
     const meta = {};
     for (const [id, info] of Object.entries(raw)) {
       meta[id] = {
         name: info.name || null,
         image_url: info.image_url || null,
+        github: info.github || null,
       };
     }
     setCache(key, meta);
