@@ -42,3 +42,4 @@ export const SIGNAL_LINES = {
 // GitHub API batching
 export const GITHUB_BATCH_SIZE = 8;
 export const GITHUB_STAGGER_MS = 500;
+export const GITHUB_REQUEST_DELAY_MS = 200; // delay between individual queued requests

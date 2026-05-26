@@ -1,44 +1,73 @@
 // Gem Scanner API — GitHub commit activity fetcher with caching + rate-limit awareness
 // Handles orgs with multiple repos (sums commits across all org repos)
+//
+// Auth: Set VITE_GITHUB_TOKEN env var to a GitHub PAT for 5,000 req/hr (vs 60 unauthenticated).
+// Caching: localStorage-backed, 30-min TTL — survives page reloads.
+// Queuing: Individual requests are spaced 200ms apart to avoid secondary rate limits.
 
-import { CACHE_TTL_MS, GITHUB_BATCH_SIZE, GITHUB_STAGGER_MS } from "./constants.js";
+import { CACHE_TTL_MS, GITHUB_REQUEST_DELAY_MS } from "./constants.js";
 
-const cache = {};
+// ─── GitHub Auth ────────────────────────────────────────────
+const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || "";
+
+function githubHeaders() {
+  const h = { Accept: "application/vnd.github.v3+json" };
+  if (GITHUB_TOKEN) h.Authorization = `token ${GITHUB_TOKEN}`;
+  return h;
+}
+
+// ─── localStorage Cache (30-min TTL) ────────────────────────
+const LS_PREFIX = "gem_gh_";
 
 function getCached(key) {
-  const entry = cache[key];
-  if (!entry) return null;
-  if (Date.now() - entry.ts > CACHE_TTL_MS) {
-    delete cache[key];
+  try {
+    const raw = localStorage.getItem(LS_PREFIX + key);
+    if (!raw) return null;
+    const entry = JSON.parse(raw);
+    if (Date.now() - entry.ts > CACHE_TTL_MS) {
+      localStorage.removeItem(LS_PREFIX + key);
+      return null;
+    }
+    return entry.data;
+  } catch {
     return null;
   }
-  return entry.data;
 }
 
 function setCache(key, data) {
-  cache[key] = { data, ts: Date.now() };
+  try {
+    localStorage.setItem(LS_PREFIX + key, JSON.stringify({ data, ts: Date.now() }));
+  } catch {
+    // localStorage full — silently ignore
+  }
+}
+
+// ─── Request Queue (200ms spacing) ──────────────────────────
+let lastRequestTime = 0;
+
+async function throttledFetch(url, opts) {
+  const now = Date.now();
+  const elapsed = now - lastRequestTime;
+  if (elapsed < GITHUB_REQUEST_DELAY_MS) {
+    await new Promise(r => setTimeout(r, GITHUB_REQUEST_DELAY_MS - elapsed));
+  }
+  lastRequestTime = Date.now();
+  return fetch(url, opts);
 }
 
 /**
  * Parse a GitHub URL into either:
  *   { type: "repo", owner, repo }   — specific repo link
  *   { type: "org", owner }          — org/user-level link (no specific repo)
- *
- * Handles:
- *   https://github.com/org
- *   https://github.com/org/repo
- *   https://github.com/org/repo/tree/branch/...
  */
 function parseGitHubUrl(url) {
   if (!url || typeof url !== "string") return null;
-  // Strip trailing slashes and whitespace
   const cleaned = url.trim().replace(/\/+$/, "");
   const match = cleaned.match(/github\.com\/([^/?#]+)(?:\/([^/?#]+))?/);
   if (!match) return null;
   const owner = match[1];
   const repo = match[2] ? match[2].replace(/\.git$/, "") : null;
 
-  // If the "repo" part looks like a GitHub page (e.g., "orgs", "repositories"), treat as org
   const orgPageKeywords = ["orgs", "repositories", "people", "projects", "packages"];
   if (!repo || orgPageKeywords.includes(repo)) {
     return { type: "org", owner };
@@ -49,31 +78,25 @@ function parseGitHubUrl(url) {
 /**
  * Fetch 7-day commit count for a single GitHub repo using the participation stats endpoint.
  * Returns the most recent week's total commits (all contributors), or -1 if rate limited.
- *
- * Uses GET /repos/{owner}/{repo}/stats/participation which returns { all: number[], owner: number[] }
- * where each array has 52 weekly totals, index 51 = most recent week.
- * GitHub may return 202 (computing stats) on first request — we retry once after a short delay.
  */
 async function fetchRepoCommits7d(owner, repo) {
-  const cacheKey = `gh_commits_${owner}_${repo}`;
+  const cacheKey = `commits_${owner}_${repo}`;
   const cached = getCached(cacheKey);
   if (cached !== null) return cached;
 
   const url = `https://api.github.com/repos/${owner}/${repo}/stats/participation`;
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await fetch(url, {
-      headers: { Accept: "application/vnd.github.v3+json" },
+    const res = await throttledFetch(url, {
+      headers: githubHeaders(),
       redirect: "follow",
     });
 
     if (res.status === 202) {
-      // GitHub is computing stats — wait and retry once
       if (attempt === 0) {
         await new Promise(r => setTimeout(r, 1500));
         continue;
       }
-      // Still computing after retry — return cached or -1
       return getCached(cacheKey) ?? -1;
     }
     if (res.status === 404 || res.status === 451) {
@@ -90,7 +113,6 @@ async function fetchRepoCommits7d(owner, repo) {
 
     const data = await res.json();
     const allWeeks = data?.all;
-    // Last element = most recent week's total commits across all contributors
     const count = Array.isArray(allWeeks) && allWeeks.length > 0
       ? allWeeks[allWeeks.length - 1]
       : 0;
@@ -106,11 +128,10 @@ async function fetchRepoCommits7d(owner, repo) {
  * Returns array of repo names (up to 100, sorted by most recently pushed).
  */
 async function fetchOrgRepos(owner) {
-  const cacheKey = `gh_org_repos_${owner}`;
+  const cacheKey = `org_repos_${owner}`;
   const cached = getCached(cacheKey);
   if (cached !== null) return cached;
 
-  // Try org endpoint first, fallback to user endpoint
   let repos = await _fetchRepoList(`https://api.github.com/orgs/${owner}/repos?per_page=100&sort=pushed&direction=desc`);
   if (repos === null) {
     repos = await _fetchRepoList(`https://api.github.com/users/${owner}/repos?per_page=100&sort=pushed&direction=desc`);
@@ -122,8 +143,8 @@ async function fetchOrgRepos(owner) {
 }
 
 async function _fetchRepoList(url) {
-  const res = await fetch(url, {
-    headers: { Accept: "application/vnd.github.v3+json" },
+  const res = await throttledFetch(url, {
+    headers: githubHeaders(),
     redirect: "follow",
   });
   if (!res.ok) return null;
@@ -136,10 +157,10 @@ async function _fetchRepoList(url) {
 
 /**
  * Fetch total 7-day commits across ALL repos in an org/user account.
- * Only checks repos pushed in the last 30 days (optimization — stale repos won't have 7d commits).
+ * Checks top 30 most recently pushed repos, queued sequentially.
  */
 async function fetchOrgCommits7d(owner) {
-  const cacheKey = `gh_org_commits_${owner}`;
+  const cacheKey = `org_commits_${owner}`;
   const cached = getCached(cacheKey);
   if (cached !== null) return cached;
 
@@ -149,31 +170,19 @@ async function fetchOrgCommits7d(owner) {
     return { total: 0, repos: [] };
   }
 
-  // Check top 30 most recently pushed repos (participation endpoint is 1 call each, no pagination)
   const reposToCheck = repos.slice(0, 30);
   let total = 0;
   let rateLimited = false;
   const repoBreakdown = [];
 
-  // Fetch in small sub-batches within the org
-  for (let i = 0; i < reposToCheck.length; i += 4) {
-    const batch = reposToCheck.slice(i, i + 4);
-    const results = await Promise.allSettled(
-      batch.map(repo => fetchRepoCommits7d(owner, repo))
-    );
-    results.forEach((r, idx) => {
-      const count = r.status === "fulfilled" ? r.value : 0;
-      if (count === -1) {
-        rateLimited = true;
-      } else if (count > 0) {
-        total += count;
-        repoBreakdown.push({ repo: batch[idx], commits: count });
-      }
-    });
-
-    // Brief stagger between sub-batches
-    if (i + 4 < reposToCheck.length) {
-      await new Promise(r => setTimeout(r, 300));
+  // Fetch sequentially — throttledFetch handles the 200ms spacing
+  for (const repo of reposToCheck) {
+    const count = await fetchRepoCommits7d(owner, repo);
+    if (count === -1) {
+      rateLimited = true;
+    } else if (count > 0) {
+      total += count;
+      repoBreakdown.push({ repo, commits: count });
     }
   }
 
@@ -184,16 +193,16 @@ async function fetchOrgCommits7d(owner) {
 
 /**
  * Fetch commit activity for all subnets that have GitHub repos/orgs.
- * Handles both single-repo links AND org-level links (sums all repos).
+ * Requests are queued with 200ms delays to avoid secondary rate limits.
  *
  * Returns: Map<netuid, { commits7d, owner, repo, repoUrl, orgRepoCount?, repoBreakdown? }>
  */
 export async function fetchGitHubActivityMap(subnetMeta, onProgress) {
-  const fullCacheKey = "gh_activity_map";
+  const fullCacheKey = "activity_map";
   const cached = getCached(fullCacheKey);
   if (cached) return cached;
 
-  // Build task list — each subnet gets classified as "repo" or "org"
+  // Build task list
   const tasks = [];
   for (const [netuid, meta] of Object.entries(subnetMeta)) {
     const parsed = parseGitHubUrl(meta.github);
@@ -202,125 +211,62 @@ export async function fetchGitHubActivityMap(subnetMeta, onProgress) {
   }
 
   const map = {};
-
-  // Separate org tasks (more expensive) from single-repo tasks
   const repoTasks = tasks.filter(t => t.type === "repo");
   const orgTasks = tasks.filter(t => t.type === "org");
+  const totalWork = tasks.length;
+  let completed = 0;
 
-  // --- Phase 1: Single-repo fetches (fast) ---
-  for (let i = 0; i < repoTasks.length; i += GITHUB_BATCH_SIZE) {
-    const batch = repoTasks.slice(i, i + GITHUB_BATCH_SIZE);
-    const results = await Promise.allSettled(
-      batch.map(t => fetchRepoCommits7d(t.owner, t.repo))
-    );
-
-    results.forEach((result, idx) => {
-      const task = batch[idx];
-      const commits7d = result.status === "fulfilled" ? result.value : 0;
-      map[task.netuid] = {
-        commits7d: commits7d === -1 ? 0 : commits7d,
-        rateLimited: commits7d === -1,
-        owner: task.owner,
-        repo: task.repo,
-        repoUrl: task.repoUrl,
-      };
-    });
-
-    if (onProgress) {
-      onProgress(Math.min(i + GITHUB_BATCH_SIZE, repoTasks.length), tasks.length);
-    }
-
-    if (i + GITHUB_BATCH_SIZE < repoTasks.length) {
-      await new Promise(r => setTimeout(r, GITHUB_STAGGER_MS));
-    }
+  // --- Phase 1: Single-repo fetches (queued sequentially) ---
+  for (const task of repoTasks) {
+    const commits7d = await fetchRepoCommits7d(task.owner, task.repo);
+    map[task.netuid] = {
+      commits7d: commits7d === -1 ? 0 : commits7d,
+      rateLimited: commits7d === -1,
+      owner: task.owner,
+      repo: task.repo,
+      repoUrl: task.repoUrl,
+    };
+    completed++;
+    if (onProgress) onProgress(completed, totalWork);
   }
 
-  // --- Phase 2: For single-repo links, also check sibling repos in the same org ---
-  // Group by owner to avoid duplicate org lookups
-  const ownersSeen = new Set();
+  // --- Phase 2: Expand single-repo owners to full org activity ---
   const repoByOwner = {};
   for (const t of repoTasks) {
     if (!repoByOwner[t.owner]) repoByOwner[t.owner] = [];
     repoByOwner[t.owner].push(t);
   }
 
-  // For each unique owner with a repo link, fetch full org activity
-  const ownersToExpand = Object.keys(repoByOwner);
-  for (let i = 0; i < ownersToExpand.length; i += 3) {
-    const batch = ownersToExpand.slice(i, i + 3);
-    const results = await Promise.allSettled(
-      batch.map(owner => fetchOrgCommits7d(owner))
-    );
-
-    results.forEach((result, idx) => {
-      const owner = batch[idx];
-      if (result.status !== "fulfilled") return;
-      const orgData = result.value;
-      // Update all subnets linked to this owner with the full org commit count
-      for (const task of repoByOwner[owner]) {
-        const existing = map[task.netuid];
-        if (existing && orgData.total > existing.commits7d) {
-          map[task.netuid] = {
-            ...existing,
-            commits7d: orgData.total,
-            orgRepoCount: orgData.repoCount,
-            repoBreakdown: orgData.repos,
-            rateLimited: orgData.rateLimited || false,
-          };
-        }
+  for (const owner of Object.keys(repoByOwner)) {
+    const orgData = await fetchOrgCommits7d(owner);
+    for (const task of repoByOwner[owner]) {
+      const existing = map[task.netuid];
+      if (existing && orgData.total > existing.commits7d) {
+        map[task.netuid] = {
+          ...existing,
+          commits7d: orgData.total,
+          orgRepoCount: orgData.repoCount,
+          repoBreakdown: orgData.repos,
+          rateLimited: orgData.rateLimited || false,
+        };
       }
-      ownersSeen.add(owner);
-    });
-
-    if (onProgress) {
-      const done = repoTasks.length + Math.min(i + 3, ownersToExpand.length);
-      onProgress(done, tasks.length + ownersToExpand.length);
-    }
-
-    if (i + 3 < ownersToExpand.length) {
-      await new Promise(r => setTimeout(r, GITHUB_STAGGER_MS));
     }
   }
 
-  // --- Phase 3: Org-level links (no specific repo in URL) ---
-  for (let i = 0; i < orgTasks.length; i += 3) {
-    const batch = orgTasks.slice(i, i + 3);
-    const results = await Promise.allSettled(
-      batch.map(t => fetchOrgCommits7d(t.owner))
-    );
-
-    results.forEach((result, idx) => {
-      const task = batch[idx];
-      if (result.status === "fulfilled") {
-        const orgData = result.value;
-        map[task.netuid] = {
-          commits7d: orgData.total,
-          rateLimited: orgData.rateLimited || false,
-          owner: task.owner,
-          repo: null,
-          repoUrl: task.repoUrl,
-          orgRepoCount: orgData.repoCount,
-          repoBreakdown: orgData.repos,
-        };
-      } else {
-        map[task.netuid] = {
-          commits7d: 0,
-          rateLimited: false,
-          owner: task.owner,
-          repo: null,
-          repoUrl: task.repoUrl,
-        };
-      }
-    });
-
-    if (onProgress) {
-      const done = repoTasks.length + ownersToExpand.length + Math.min(i + 3, orgTasks.length);
-      onProgress(done, tasks.length + ownersToExpand.length);
-    }
-
-    if (i + 3 < orgTasks.length) {
-      await new Promise(r => setTimeout(r, GITHUB_STAGGER_MS));
-    }
+  // --- Phase 3: Org-level links ---
+  for (const task of orgTasks) {
+    const orgData = await fetchOrgCommits7d(task.owner);
+    map[task.netuid] = {
+      commits7d: orgData.total,
+      rateLimited: orgData.rateLimited || false,
+      owner: task.owner,
+      repo: null,
+      repoUrl: task.repoUrl,
+      orgRepoCount: orgData.repoCount,
+      repoBreakdown: orgData.repos,
+    };
+    completed++;
+    if (onProgress) onProgress(completed, totalWork);
   }
 
   setCache(fullCacheKey, map);
