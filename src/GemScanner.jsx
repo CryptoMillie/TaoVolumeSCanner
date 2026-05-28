@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useSharedData } from "./DataContext.jsx";
-import { fetchGitHubActivityMap } from "./gem/api.js";
+import { fetchDevActivity } from "./gem/api.js";
 import { scoreGems } from "./gem/scoring.js";
 import { GEM_TIER_CONFIG, QUADRANTS, SIGNAL_LINES } from "./gem/constants.js";
 
@@ -329,18 +329,14 @@ export default function GemScanner() {
     setErr(null);
     setProgress("Fetching TaoStats + CoinGecko...");
     try {
-      const [tsData, cgData] = await Promise.all([
+      const [tsData, cgData, devMap] = await Promise.all([
         refreshTaoStats(),
         refreshCoinGecko(),
+        fetchDevActivity(),
       ]);
 
-      setProgress("Fetching GitHub commit activity...");
-      const githubMap = await fetchGitHubActivityMap(
-        tsData.meta,
-        (done, total) => setProgress(`Scanning GitHub repos... ${done}/${total}`)
-      );
-
-      const results = scoreGems(tsData.subnets, tsData.pools, tsData.meta, githubMap, cgData);
+      setProgress("Scoring subnets...");
+      const results = scoreGems(tsData.subnets, tsData.pools, tsData.meta, devMap, cgData);
       setScored(results);
       setTs(new Date());
       setProgress(null);

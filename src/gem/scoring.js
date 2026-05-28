@@ -42,8 +42,9 @@ function median(arr) {
 
 /**
  * Score all subnets with Gem Score.
+ * devActivityMap comes from TaoStats /api/dev_activity/latest/v1, keyed by netuid.
  */
-export function scoreGems(subnets, pools, meta, githubMap, coinGecko) {
+export function scoreGems(subnets, pools, meta, devActivityMap, coinGecko) {
   const subnetArr = Array.isArray(subnets) ? subnets : (subnets?.data || []);
   const poolArr = Array.isArray(pools) ? pools : (pools?.data || []);
 
@@ -67,19 +68,28 @@ export function scoreGems(subnets, pools, meta, githubMap, coinGecko) {
     const netuid = s.netuid ?? s.subnet_id;
     const metaEntry = meta[String(netuid)] || {};
     const pool = poolMap[netuid];
-    const ghData = githubMap[netuid];
+    const devData = devActivityMap[netuid] || null;
     const cgKey = `sn${netuid}`;
     const cgData = cgMap[cgKey];
 
-    // Name resolution: meta -> pool -> fallback
-    const name = metaEntry.name || pool?.name || `Subnet ${netuid}`;
+    // Name resolution: pool (most current on-chain) -> meta -> subnet API -> fallback
+    // Identical priority to SRI, Health, Purity, Intel, Volume scanners
+    const name = (pool?.name && pool.name !== "Unknown") ? pool.name
+               : metaEntry.name ? metaEntry.name
+               : (s.name && s.name !== "Unknown") ? s.name
+               : (s.subnet_name && s.subnet_name !== "Unknown") ? s.subnet_name
+               : `Subnet ${netuid}`;
     const logo = metaEntry.image_url || null;
 
-    // Dev metrics
-    const commits7d = ghData ? ghData.commits7d : 0;
-    const hasRepo = !!(ghData || metaEntry.github);
-    const rateLimited = ghData?.rateLimited || false;
-    const repoUrl = ghData?.repoUrl || metaEntry.github || "";
+    // Dev metrics from TaoStats dev_activity endpoint
+    const commits7d = devData ? devData.commits7d : 0;
+    const hasRepo = !!(devData?.repoUrl || metaEntry.github);
+    const repoUrl = devData?.repoUrl || metaEntry.github || "";
+
+    // Extra dev metrics (available from TaoStats but not from old GitHub scraper)
+    const prsMerged7d = devData ? devData.prsMerged7d : 0;
+    const uniqueContributors7d = devData ? devData.uniqueContributors7d : 0;
+    const daysSinceLastEvent = devData?.daysSinceLastEvent;
 
     // Market metrics from CoinGecko
     const marketCap = num(cgData?.market_cap);
@@ -99,8 +109,10 @@ export function scoreGems(subnets, pools, meta, githubMap, coinGecko) {
       logo,
       commits7d,
       hasRepo,
-      rateLimited,
       repoUrl,
+      prsMerged7d,
+      uniqueContributors7d,
+      daysSinceLastEvent,
       marketCap,
       volume,
       price,

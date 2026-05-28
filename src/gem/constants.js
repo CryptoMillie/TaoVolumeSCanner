@@ -1,6 +1,6 @@
 // Gem Scanner Constants — Dev Activity vs Market Cap intelligence
 
-export const CACHE_TTL_MS = 30 * 60 * 1000; // 30-min cache (GitHub rate limit: 60/hr)
+export const CACHE_TTL_MS = 15 * 60 * 1000; // 15-min cache — matches TaoStats/DataContext TTL
 
 // Gem Score weights
 export const GEM_WEIGHTS = {
@@ -38,8 +38,3 @@ export const SIGNAL_LINES = {
   overhyped:   "High valuation, low development activity \u26A0",
   dormant:     "Low activity and low market cap \u{1F4A4}",
 };
-
-// GitHub API batching
-export const GITHUB_BATCH_SIZE = 8;
-export const GITHUB_STAGGER_MS = 500;
-export const GITHUB_REQUEST_DELAY_MS = 200; // delay between individual queued requests
