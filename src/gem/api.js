@@ -35,16 +35,28 @@ function setCache(data) {
 }
 
 /**
+ * Fetch with retry + exponential backoff (matches DataContext pattern).
+ */
+async function fetchWithRetry(url, headers, retries = 2) {
+  for (let i = 0; i <= retries; i++) {
+    const res = await fetch(url, { headers });
+    if (res.ok) return res.json();
+    if (i < retries && (res.status === 429 || res.status >= 500)) {
+      await new Promise(r => setTimeout(r, 1000 * 2 ** i));
+      continue;
+    }
+    throw new Error(`TaoStats dev_activity ${res.status}: ${res.statusText}`);
+  }
+}
+
+/**
  * Fetch a single page from the TaoStats dev_activity endpoint.
  */
 async function fetchPage(page) {
   const url = `https://api.taostats.io/api/dev_activity/latest/v1?page=${page}`;
   const headers = {};
   if (API_KEY) headers["Authorization"] = API_KEY;
-
-  const res = await fetch(url, { headers });
-  if (!res.ok) throw new Error(`TaoStats dev_activity ${res.status}: ${res.statusText}`);
-  return res.json();
+  return fetchWithRetry(url, headers);
 }
 
 /**
@@ -77,18 +89,12 @@ export async function fetchDevActivity() {
       if (e.netuid != null) map[e.netuid] = normalizeEntry(e);
     }
 
-    // Fetch remaining pages in parallel
-    if (totalPages > 1) {
-      const remaining = [];
-      for (let p = 2; p <= totalPages; p++) {
-        remaining.push(fetchPage(p));
-      }
-      const pages = await Promise.all(remaining);
-      for (const page of pages) {
-        const data = Array.isArray(page.data) ? page.data : [];
-        for (const e of data) {
-          if (e.netuid != null) map[e.netuid] = normalizeEntry(e);
-        }
+    // Fetch remaining pages sequentially to avoid 429
+    for (let p = 2; p <= totalPages; p++) {
+      const page = await fetchPage(p);
+      const data = Array.isArray(page.data) ? page.data : [];
+      for (const e of data) {
+        if (e.netuid != null) map[e.netuid] = normalizeEntry(e);
       }
     }
 

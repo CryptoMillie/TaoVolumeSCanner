@@ -329,11 +329,13 @@ export default function GemScanner() {
     setErr(null);
     setProgress("Fetching TaoStats + CoinGecko...");
     try {
-      const [tsData, cgData, devMap] = await Promise.all([
+      const [tsData, cgData] = await Promise.all([
         refreshTaoStats(),
         refreshCoinGecko(),
-        fetchDevActivity(),
       ]);
+
+      setProgress("Fetching dev activity...");
+      const devMap = await fetchDevActivity();
 
       setProgress("Scoring subnets...");
       const results = scoreGems(tsData.subnets, tsData.pools, tsData.meta, devMap, cgData);
