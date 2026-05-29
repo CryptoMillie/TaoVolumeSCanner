@@ -1,6 +1,7 @@
 // Conviction Locks RPC Layer — raw WebSocket JSON-RPC to Finney
 // Queries OwnerLock + DecayingOwnerLock storage maps via state_getKeysPaged + state_getStorage
 
+import { xxhashAsHex } from "@polkadot/util-crypto";
 import {
   FINNEY_WS,
   MAX_NETUIDS,
@@ -58,125 +59,11 @@ function saveToStorage(data) {
   }
 }
 
-// ─── twox128 hash (pure JS, no dependencies) ─────────────
-// xxHash64 implementation for Substrate storage key computation
-// Substrate uses twox128 = xxHash64(seed=0) ++ xxHash64(seed=1)
-
-const PRIME1 = 0x9E3779B185EBCA87n;
-const PRIME2 = 0x14DEF9DEA2F79CD6n;
-const PRIME3 = 0x0000000165868003n; // not used in round
-const PRIME5 = 0x27D4EB2F165B7D62n;
-
-function rotl64(v, n) {
-  n = BigInt(n);
-  return ((v << n) | (v >> (64n - n))) & 0xFFFFFFFFFFFFFFFFn;
-}
-
-function xxh64Round(acc, input) {
-  acc = (acc + input * PRIME2) & 0xFFFFFFFFFFFFFFFFn;
-  acc = rotl64(acc, 31);
-  acc = (acc * PRIME1) & 0xFFFFFFFFFFFFFFFFn;
-  return acc;
-}
-
-function xxh64MergeRound(acc, val) {
-  val = xxh64Round(0n, val);
-  acc = (acc ^ val) & 0xFFFFFFFFFFFFFFFFn;
-  acc = (acc * PRIME1 + 0x0000000085EBCA77n) & 0xFFFFFFFFFFFFFFFFn; // PRIME4 partial
-  return acc;
-}
-
-function readU64LE_bigint(bytes, offset) {
-  let v = 0n;
-  for (let i = 0; i < 8; i++) {
-    v |= BigInt(bytes[offset + i]) << BigInt(i * 8);
-  }
-  return v;
-}
-
-function readU32LE_bigint(bytes, offset) {
-  let v = 0n;
-  for (let i = 0; i < 4; i++) {
-    v |= BigInt(bytes[offset + i]) << BigInt(i * 8);
-  }
-  return v;
-}
-
-function xxhash64(input, seed) {
-  const bytes = typeof input === "string"
-    ? new TextEncoder().encode(input)
-    : input;
-  const len = bytes.length;
-  let h;
-  let p = 0;
-
-  if (len >= 32) {
-    let v1 = (seed + PRIME1 + PRIME2) & 0xFFFFFFFFFFFFFFFFn;
-    let v2 = (seed + PRIME2) & 0xFFFFFFFFFFFFFFFFn;
-    let v3 = seed;
-    let v4 = (seed - PRIME1) & 0xFFFFFFFFFFFFFFFFn;
-
-    const limit = len - 32;
-    while (p <= limit) {
-      v1 = xxh64Round(v1, readU64LE_bigint(bytes, p)); p += 8;
-      v2 = xxh64Round(v2, readU64LE_bigint(bytes, p)); p += 8;
-      v3 = xxh64Round(v3, readU64LE_bigint(bytes, p)); p += 8;
-      v4 = xxh64Round(v4, readU64LE_bigint(bytes, p)); p += 8;
-    }
-
-    h = rotl64(v1, 1) + rotl64(v2, 7) + rotl64(v3, 12) + rotl64(v4, 18);
-    h &= 0xFFFFFFFFFFFFFFFFn;
-
-    h = xxh64MergeRound(h, v1);
-    h = xxh64MergeRound(h, v2);
-    h = xxh64MergeRound(h, v3);
-    h = xxh64MergeRound(h, v4);
-  } else {
-    h = (seed + PRIME5) & 0xFFFFFFFFFFFFFFFFn;
-  }
-
-  h = (h + BigInt(len)) & 0xFFFFFFFFFFFFFFFFn;
-
-  // Remaining bytes
-  const end = len;
-  while (p + 8 <= end) {
-    const k1 = xxh64Round(0n, readU64LE_bigint(bytes, p));
-    h = (rotl64(h ^ k1, 27) * PRIME1 + 0x0000000085EBCA77n) & 0xFFFFFFFFFFFFFFFFn;
-    p += 8;
-  }
-
-  if (p + 4 <= end) {
-    h = (h ^ (readU32LE_bigint(bytes, p) * PRIME1)) & 0xFFFFFFFFFFFFFFFFn;
-    h = (rotl64(h, 23) * PRIME2 + 0x0000000165868003n) & 0xFFFFFFFFFFFFFFFFn;
-    p += 4;
-  }
-
-  while (p < end) {
-    h = (h ^ (BigInt(bytes[p]) * PRIME5)) & 0xFFFFFFFFFFFFFFFFn;
-    h = (rotl64(h, 11) * PRIME1) & 0xFFFFFFFFFFFFFFFFn;
-    p += 1;
-  }
-
-  // Avalanche
-  h = ((h ^ (h >> 33n)) * PRIME2) & 0xFFFFFFFFFFFFFFFFn;
-  h = ((h ^ (h >> 29n)) * 0x0000000165868003n) & 0xFFFFFFFFFFFFFFFFn;
-  h = (h ^ (h >> 32n)) & 0xFFFFFFFFFFFFFFFFn;
-
-  return h;
-}
-
-function bigintToHexLE(v, byteLen) {
-  const arr = [];
-  for (let i = 0; i < byteLen; i++) {
-    arr.push(Number((v >> BigInt(i * 8)) & 0xFFn).toString(16).padStart(2, "0"));
-  }
-  return arr.join("");
-}
+// ─── twox128 hash via @polkadot/util-crypto ───────────────
 
 function twox128(input) {
-  const h0 = xxhash64(input, 0n);
-  const h1 = xxhash64(input, 1n);
-  return bigintToHexLE(h0, 8) + bigintToHexLE(h1, 8);
+  // xxhashAsHex returns "0x" + 32 hex chars for 128-bit hash
+  return xxhashAsHex(input, 128).replace("0x", "");
 }
 
 // ─── Storage key helpers ──────────────────────────────────
@@ -227,9 +114,10 @@ function decodeLockState(hexStr) {
   const lastUpdate = readU64LE(bytes, 24);
 
   // locked_mass is in rao (1e9 rao = 1 TAO/alpha)
-  // conviction is U64F64 fixed point — integer part is upper 64 bits
+  // conviction is U64F64 fixed point — integer part is upper 64 bits, also in rao
   const lockedMass = Number(lockedMassRaw) / 1e9;
-  const conviction = Number(convictionRaw >> 64n) + Number(convictionRaw & 0xFFFFFFFFFFFFFFFFn) / (2 ** 64);
+  const convictionRao = Number(convictionRaw >> 64n) + Number(convictionRaw & 0xFFFFFFFFFFFFFFFFn) / (2 ** 64);
+  const conviction = convictionRao / 1e9;
 
   return {
     locked_mass: lockedMass,
