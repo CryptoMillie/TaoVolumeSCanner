@@ -20,6 +20,19 @@ export function classifyLockStatus(entry) {
 }
 
 /**
+ * Classify lock status for a challenger hotkey lock
+ * Returns: "strong" | "building" | "zero"
+ */
+export function classifyChallengerStatus(challenger) {
+  if (challenger.locked_mass <= 0) return "zero";
+  if (challenger.conviction <= 0) return "zero";
+  const ratio = challenger.conviction / challenger.locked_mass;
+  if (ratio >= STRONG_THRESHOLD) return "strong";
+  if (ratio >= BUILDING_MIN) return "building";
+  return "zero";
+}
+
+/**
  * Get conviction ratio (0-1) for display
  */
 export function getConvictionRatio(entry) {
@@ -59,11 +72,21 @@ export function scoreConviction(convictionData, poolData, subnetMeta) {
     const status = classifyLockStatus(entry);
     const ratio = getConvictionRatio(entry);
 
+    // Score challenger locks for this subnet
+    const scoredChallengers = (entry.challengers || []).map((c) => ({
+      ...c,
+      status: classifyChallengerStatus(c),
+      ratio: c.locked_mass > 0 && c.conviction > 0
+        ? Math.min(c.conviction / c.locked_mass, 1)
+        : 0,
+    }));
+
     return {
       ...entry,
       name,
       status,
       ratio,
+      challengers: scoredChallengers,
     };
   });
 }
@@ -82,6 +105,16 @@ export function computeSummary(scored) {
   const strong = scored.filter((s) => s.status === "strong").length;
   const building = scored.filter((s) => s.status === "building").length;
 
+  // Challenger stats
+  let challengerCount = 0;
+  let totalChallengerLocked = 0;
+  for (const s of scored) {
+    if (s.challengers && s.challengers.length > 0) {
+      challengerCount += s.challengers.length;
+      totalChallengerLocked += s.challengers.reduce((sum, c) => sum + c.locked_mass, 0);
+    }
+  }
+
   return {
     totalWithLock,
     totalLocked,
@@ -89,6 +122,8 @@ export function computeSummary(scored) {
     noLock,
     strong,
     building,
+    challengerCount,
+    totalChallengerLocked,
     totalSubnets: scored.length,
   };
 }

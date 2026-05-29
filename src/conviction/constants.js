@@ -83,3 +83,4 @@ export const PALLET = "SubtensorModule";
 export const STORAGE_OWNER_LOCK = "OwnerLock";
 export const STORAGE_DECAYING_OWNER_LOCK = "DecayingOwnerLock";
 export const STORAGE_HOTKEY_LOCK = "HotkeyLock";
+export const STORAGE_DECAYING_HOTKEY_LOCK = "DecayingHotkeyLock";

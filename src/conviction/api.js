@@ -12,6 +12,7 @@ import {
   STORAGE_OWNER_LOCK,
   STORAGE_DECAYING_OWNER_LOCK,
   STORAGE_HOTKEY_LOCK,
+  STORAGE_DECAYING_HOTKEY_LOCK,
   BLOCKS_PER_DAY,
 } from "./constants.js";
 
@@ -217,14 +218,29 @@ async function fetchAllStorageEntries(ws, prefix) {
 }
 
 // ─── Extract netuid from MAP key ──────────────────────────
-// MAP keys: prefix(32 bytes hex = 64 chars) + hasher_output + netuid_le_u16
-// The last 2 bytes of the key are the u16 netuid in little-endian
+// OwnerLock/DecayingOwnerLock: MAP(netuid) with Identity hasher
+// Key layout: prefix(64 hex) + Identity(u16 LE netuid, 4 hex) = 68 hex total
 function extractNetuid(key) {
   const hex = key.replace("0x", "");
   // Last 4 hex chars = 2 bytes = u16 LE netuid
   const lo = parseInt(hex.substring(hex.length - 4, hex.length - 2), 16);
   const hi = parseInt(hex.substring(hex.length - 2), 16);
   return lo | (hi << 8);
+}
+
+// ─── Extract netuid + hotkey from DoubleMap key ─────────────
+// HotkeyLock/DecayingHotkeyLock: DMAP(netuid, hotkey) with Identity + Blake2_128Concat
+// Key layout: prefix(64 hex) + Identity(u16 LE netuid, 4 hex) + Blake2_128(32 hex) + AccountId32(64 hex) = 164 hex total
+function extractNetuidAndHotkey(key) {
+  const hex = key.replace("0x", "");
+  const suffix = hex.substring(64); // everything after the 32-byte prefix
+  // First 4 hex chars = u16 LE netuid (Identity hasher)
+  const lo = parseInt(suffix.substring(0, 2), 16);
+  const hi = parseInt(suffix.substring(2, 4), 16);
+  const netuid = lo | (hi << 8);
+  // Skip 32 hex chars of Blake2_128 hash, then 64 hex chars = AccountId32
+  const hotkey = "0x" + suffix.substring(36, 100);
+  return { netuid, hotkey };
 }
 
 // ─── Main fetch function ─────────────────────────────────
@@ -253,13 +269,17 @@ export async function fetchConvictionData(subnetMeta) {
     // Fetch current block for age calculation
     const currentBlock = await fetchCurrentBlock(ws);
 
-    // Fetch OwnerLock and DecayingOwnerLock entries in parallel
+    // Fetch all lock entries in parallel: owner + decaying owner + hotkey + decaying hotkey
     const ownerPrefix = storagePrefix(PALLET, STORAGE_OWNER_LOCK);
     const decayingPrefix = storagePrefix(PALLET, STORAGE_DECAYING_OWNER_LOCK);
+    const hotkeyPrefix = storagePrefix(PALLET, STORAGE_HOTKEY_LOCK);
+    const decayingHotkeyPrefix = storagePrefix(PALLET, STORAGE_DECAYING_HOTKEY_LOCK);
 
-    const [ownerEntries, decayingEntries] = await Promise.all([
+    const [ownerEntries, decayingEntries, hotkeyEntries, decayingHotkeyEntries] = await Promise.all([
       fetchAllStorageEntries(ws, ownerPrefix),
       fetchAllStorageEntries(ws, decayingPrefix),
+      fetchAllStorageEntries(ws, hotkeyPrefix),
+      fetchAllStorageEntries(ws, decayingHotkeyPrefix),
     ]);
 
     // Build lock map: netuid -> { lockState, lockType }
@@ -298,11 +318,47 @@ export async function fetchConvictionData(subnetMeta) {
       }
     }
 
+    // Build challenger lock map: netuid -> [{ hotkey, state, lockType }]
+    const challengerMap = {};
+
+    for (const entry of hotkeyEntries) {
+      const { netuid, hotkey } = extractNetuidAndHotkey(entry.key);
+      const state = decodeLockState(entry.value);
+      if (state) {
+        if (!challengerMap[netuid]) challengerMap[netuid] = [];
+        challengerMap[netuid].push({
+          hotkey,
+          ...state,
+          lockType: "perpetual",
+        });
+      }
+    }
+
+    for (const entry of decayingHotkeyEntries) {
+      const { netuid, hotkey } = extractNetuidAndHotkey(entry.key);
+      const state = decodeLockState(entry.value);
+      if (state) {
+        if (!challengerMap[netuid]) challengerMap[netuid] = [];
+        // Check if this hotkey already has a perpetual lock on this subnet
+        const existing = challengerMap[netuid].find((c) => c.hotkey === hotkey);
+        if (existing) {
+          existing.decayingLock = state;
+        } else {
+          challengerMap[netuid].push({
+            hotkey,
+            ...state,
+            lockType: "decaying",
+          });
+        }
+      }
+    }
+
     // Build results for all subnets 0-127
     const results = [];
     for (let netuid = 0; netuid < MAX_NETUIDS; netuid++) {
       const lock = lockMap[netuid] || null;
       const meta = subnetMeta?.[String(netuid)] || null;
+      const challengers = challengerMap[netuid] || [];
 
       const entry = {
         netuid,
@@ -315,6 +371,7 @@ export async function fetchConvictionData(subnetMeta) {
         daysSinceUpdate: lock
           ? Math.max(0, Math.floor((currentBlock - lock.last_update) / BLOCKS_PER_DAY))
           : null,
+        challengers,
         rpcError: false,
       };
 
@@ -327,6 +384,8 @@ export async function fetchConvictionData(subnetMeta) {
       fetchedAt: Date.now(),
       ownerLockCount: ownerEntries.length,
       decayingLockCount: decayingEntries.length,
+      hotkeyLockCount: hotkeyEntries.length,
+      decayingHotkeyLockCount: decayingHotkeyEntries.length,
     };
 
     setCache(data);

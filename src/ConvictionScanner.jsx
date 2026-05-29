@@ -597,6 +597,18 @@ export default function ConvictionScanner() {
             </div>
           </div>
 
+          <div style={S.card("#9966ff")}>
+            <div style={S.cardLabel}>Challenger Locks</div>
+            <div style={S.cardValue("#9966ff")}>
+              <AnimCounter target={summary.challengerCount} />
+            </div>
+            <div style={{ color: "#443366", fontSize: "9px", marginTop: "2px" }}>
+              {summary.totalChallengerLocked >= 1
+                ? `${summary.totalChallengerLocked.toFixed(1)} \u03B1 total`
+                : "no challenger alpha"}
+            </div>
+          </div>
+
           <div style={S.card("#333355")}>
             <div style={S.cardLabel}>Last Updated</div>
             <div style={{ color: "#666688", fontSize: "12px", fontWeight: 600, marginTop: "4px" }}>
@@ -665,6 +677,23 @@ export default function ConvictionScanner() {
                         {isGem && (
                           <span style={{ marginLeft: "6px" }} title="Also in Gem Scan \uD83D\uDC8E Gem Zone">
                             {"\uD83D\uDC8E"}
+                          </span>
+                        )}
+                        {row.challengers && row.challengers.length > 0 && (
+                          <span
+                            style={{
+                              marginLeft: "6px",
+                              padding: "1px 5px",
+                              borderRadius: "3px",
+                              fontSize: "9px",
+                              fontWeight: 600,
+                              color: "#9966ff",
+                              background: "#1a0e2e",
+                              border: "1px solid #2a1a44",
+                            }}
+                            title={`${row.challengers.length} challenger hotkey lock${row.challengers.length > 1 ? "s" : ""}`}
+                          >
+                            {row.challengers.length} challenger{row.challengers.length > 1 ? "s" : ""}
                           </span>
                         )}
                       </td>
@@ -802,6 +831,69 @@ export default function ConvictionScanner() {
                               fontSize: "9px",
                             }}>
                               No active conviction lock — exposed to emission blocking per Const's May 24 2026 announcement
+                            </div>
+                          )}
+                          {/* Challenger hotkey locks */}
+                          {row.challengers && row.challengers.length > 0 && (
+                            <div style={{
+                              marginTop: "12px",
+                              padding: "8px 12px",
+                              background: "#0c0818",
+                              border: "1px solid #2a1a44",
+                              borderRadius: "4px",
+                            }}>
+                              <div style={{
+                                color: "#9966ff",
+                                fontSize: "10px",
+                                fontWeight: 700,
+                                marginBottom: "6px",
+                                letterSpacing: "0.08em",
+                              }}>
+                                CHALLENGER HOTKEY LOCKS ({row.challengers.length})
+                              </div>
+                              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                                <thead>
+                                  <tr>
+                                    <th style={{ ...S.th, fontSize: "8px", padding: "4px 8px", borderBottom: "1px solid #1a1a2e" }}>HOTKEY</th>
+                                    <th style={{ ...S.th, fontSize: "8px", padding: "4px 8px", borderBottom: "1px solid #1a1a2e" }}>LOCKED</th>
+                                    <th style={{ ...S.th, fontSize: "8px", padding: "4px 8px", borderBottom: "1px solid #1a1a2e" }}>CONVICTION</th>
+                                    <th style={{ ...S.th, fontSize: "8px", padding: "4px 8px", borderBottom: "1px solid #1a1a2e" }}>TYPE</th>
+                                    <th style={{ ...S.th, fontSize: "8px", padding: "4px 8px", borderBottom: "1px solid #1a1a2e" }}>STATUS</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {row.challengers.map((ch, ci) => {
+                                    const chCfg = LOCK_STATUS_CONFIG[ch.status] || LOCK_STATUS_CONFIG.zero;
+                                    return (
+                                      <tr key={ci}>
+                                        <td style={{ padding: "4px 8px", fontSize: "10px", color: "#7766cc", fontFamily: "'JetBrains Mono',monospace", borderBottom: "1px solid #0e0e1c" }}>
+                                          {truncAddr(ch.hotkey)}
+                                        </td>
+                                        <td style={{ padding: "4px 8px", fontSize: "10px", color: "#b0b0cc", borderBottom: "1px solid #0e0e1c" }}>
+                                          {fAlpha(ch.locked_mass)}
+                                        </td>
+                                        <td style={{ padding: "4px 8px", fontSize: "10px", color: "#8888cc", borderBottom: "1px solid #0e0e1c" }}>
+                                          {fAlpha(ch.conviction)}
+                                          {ch.locked_mass > 0 && (
+                                            <span style={{ marginLeft: "4px", color: "#444466", fontSize: "9px" }}>
+                                              ({(ch.ratio * 100).toFixed(1)}%)
+                                            </span>
+                                          )}
+                                        </td>
+                                        <td style={{ padding: "4px 8px", fontSize: "10px", borderBottom: "1px solid #0e0e1c" }}>
+                                          {ch.lockType === "perpetual"
+                                            ? <span style={{ color: "#33bb66" }}>Perpetual</span>
+                                            : <span style={{ color: "#ddaa00" }}>Decaying</span>
+                                          }
+                                        </td>
+                                        <td style={{ padding: "4px 8px", borderBottom: "1px solid #0e0e1c" }}>
+                                          <span style={S.badge(chCfg)}>{chCfg.label}</span>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
                             </div>
                           )}
                         </td>
