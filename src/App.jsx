@@ -7,6 +7,7 @@ import IntelScanner from "./IntelScanner.jsx";
 import AlphaScanner from "./AlphaScanner.jsx";
 import PurityScanner from "./PurityScanner.jsx";
 import GemScanner from "./GemScanner.jsx";
+import ConvictionScanner from "./ConvictionScanner.jsx";
 
 const TAB_STYLE = (active) => ({
   background: active ? "#1818cc" : "transparent",
@@ -61,9 +62,12 @@ export default function App() {
         <button onClick={() => setTab("gem")} style={TAB_STYLE(tab === "gem")}>
           GEM SCAN {"\u{1F48E}"}
         </button>
+        <button onClick={() => setTab("conviction")} style={TAB_STYLE(tab === "conviction")}>
+          CONVICTION LOCKS {"\uD83D\uDD12"}
+        </button>
       </div>
 
-      {tab === "volume" ? <VolumeScanner /> : tab === "sri" ? <SRIScanner /> : tab === "health" ? <HealthScanner /> : tab === "intel" ? <IntelScanner /> : tab === "alpha" ? <AlphaScanner /> : tab === "purity" ? <PurityScanner /> : <GemScanner />}
+      {tab === "volume" ? <VolumeScanner /> : tab === "sri" ? <SRIScanner /> : tab === "health" ? <HealthScanner /> : tab === "intel" ? <IntelScanner /> : tab === "alpha" ? <AlphaScanner /> : tab === "purity" ? <PurityScanner /> : tab === "gem" ? <GemScanner /> : tab === "conviction" ? <ConvictionScanner /> : <VolumeScanner />}
     </div>
     </DataProvider>
   );
