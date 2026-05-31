@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useSharedData } from "./DataContext.jsx";
 import { fetchConvictionData, forceRefreshConviction } from "./conviction/api.js";
 import { scoreConviction, computeSummary } from "./conviction/scoring.js";
-import { LOCK_STATUS_CONFIG, MATURITY_CURVE, TOOLTIPS } from "./conviction/constants.js";
+import { LOCK_STATUS_CONFIG, MATURITY_CURVE, TOOLTIPS, MIN_LOCK_THRESHOLDS } from "./conviction/constants.js";
 import { fetchDevActivity } from "./gem/api.js";
 import { scoreGems } from "./gem/scoring.js";
 
@@ -113,7 +113,7 @@ function MaturityPanel() {
       marginTop: "8px",
     }}>
       <div style={{ color: "#5555ff", fontWeight: 700, marginBottom: "8px", fontSize: "11px" }}>
-        Conviction maturity curve — perpetual lock to non-owner hotkey, 60-day half-life
+        Conviction maturity curve — perpetual lock to non-owner hotkey, 90-day half-life
       </div>
       <div style={{ display: "flex", gap: "2px", flexWrap: "wrap" }}>
         {MATURITY_CURVE.map((row) => (
@@ -301,6 +301,7 @@ export default function ConvictionScanner() {
   const [freq, setFreq] = useState(120);
   const [gemNetuids, setGemNetuids] = useState(new Set());
   const [showMaturity, setShowMaturity] = useState(false);
+  const [minLock, setMinLock] = useState(0);
   const timerRef = useRef();
 
   const scan = useCallback(async () => {
@@ -367,12 +368,21 @@ export default function ConvictionScanner() {
     }
   };
 
+  // Apply min-lock threshold — subnets below threshold are treated as "nolock" for display
+  const thresholdData = minLock > 0
+    ? data.map((d) =>
+        d.hasLock && d.locked_mass < minLock
+          ? { ...d, _belowThreshold: true, _origStatus: d.status, status: "nolock" }
+          : d
+      )
+    : data;
+
   // Filter
-  let filtered = data;
-  if (filter === "strong") filtered = data.filter((d) => d.status === "strong");
-  else if (filter === "building") filtered = data.filter((d) => d.status === "building");
-  else if (filter === "nolock") filtered = data.filter((d) => d.status === "nolock");
-  else if (filter === "zero") filtered = data.filter((d) => d.status === "zero");
+  let filtered = thresholdData;
+  if (filter === "strong") filtered = thresholdData.filter((d) => d.status === "strong");
+  else if (filter === "building") filtered = thresholdData.filter((d) => d.status === "building");
+  else if (filter === "nolock") filtered = thresholdData.filter((d) => d.status === "nolock");
+  else if (filter === "zero") filtered = thresholdData.filter((d) => d.status === "zero");
 
   // Search
   if (search.trim()) {
@@ -471,22 +481,34 @@ export default function ConvictionScanner() {
 
         {/* Controls row */}
         <div style={S.controls}>
-          {/* Filter buttons */}
+          {/* Filter buttons — counts reflect min-lock threshold */}
           <button onClick={() => setFilter("all")} style={S.btn(filter === "all")}>
-            ALL ({data.length})
+            ALL ({thresholdData.length})
           </button>
           <button onClick={() => setFilter("strong")} style={S.btn(filter === "strong")}>
-            {"\uD83D\uDFE2"} Strong ({summary?.strong || 0})
+            {"\uD83D\uDFE2"} Strong ({thresholdData.filter((d) => d.status === "strong").length})
           </button>
           <button onClick={() => setFilter("building")} style={S.btn(filter === "building")}>
-            {"\uD83D\uDFE1"} Building ({summary?.building || 0})
+            {"\uD83D\uDFE1"} Building ({thresholdData.filter((d) => d.status === "building").length})
           </button>
           <button onClick={() => setFilter("zero")} style={S.btn(filter === "zero")}>
-            {"\uD83D\uDD34"} Zero ({summary?.zeroConviction || 0})
+            {"\uD83D\uDD34"} Zero ({thresholdData.filter((d) => d.status === "zero").length})
           </button>
           <button onClick={() => setFilter("nolock")} style={S.btn(filter === "nolock")}>
-            {"\u26A0\uFE0F"} No Lock ({summary?.noLock || 0})
+            {"\u26A0\uFE0F"} No Lock ({thresholdData.filter((d) => d.status === "nolock").length})
           </button>
+
+          {/* Min lock filter — filters out auto-locked dust from Conviction v2 */}
+          <span style={{ color: "#333355", fontSize: "10px", marginLeft: "4px" }}>Min lock:</span>
+          <select
+            value={minLock}
+            onChange={(e) => setMinLock(Number(e.target.value))}
+            style={S.freqSelect}
+          >
+            {MIN_LOCK_THRESHOLDS.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
 
           {/* Search */}
           <input
@@ -555,9 +577,15 @@ export default function ConvictionScanner() {
       {summary && (
         <div style={S.summaryRow}>
           <div style={S.card("#5555ff")}>
-            <div style={S.cardLabel}>Subnets with locks</div>
+            <div style={S.cardLabel}>
+              Subnets with locks
+              {minLock > 0 && <span style={{ color: "#555577" }}> (>{minLock} {"\u03B1"})</span>}
+            </div>
             <div style={S.cardValue("#5555ff")}>
-              <AnimCounter target={summary.totalWithLock} />
+              <AnimCounter target={minLock > 0
+                ? thresholdData.filter((d) => d.status !== "nolock" && d.hasLock && d.locked_mass >= minLock).length
+                : summary.totalWithLock
+              } />
               <span style={{ fontSize: "11px", color: "#333366", marginLeft: "4px" }}>
                 / {summary.totalSubnets}
               </span>
@@ -748,6 +776,16 @@ export default function ConvictionScanner() {
                         <span style={S.badge(statusCfg)}>
                           {statusCfg.label}
                         </span>
+                        {row._belowThreshold && (
+                          <span style={{
+                            marginLeft: "6px",
+                            fontSize: "9px",
+                            color: "#555577",
+                            fontStyle: "italic",
+                          }}>
+                            auto-locked
+                          </span>
+                        )}
                       </td>
                     </tr>
 
