@@ -17,38 +17,35 @@ export const STAGGER_MS = 200;
 export const UNLOCK_RATE_BLOCKS = 972_000;
 export const BLOCKS_PER_DAY = 7200;
 
-// Lock status thresholds
-export const STRONG_THRESHOLD = 0.80; // conviction >= 80% of locked_mass
-export const BUILDING_MIN = 0.01;     // conviction >= 1% of locked_mass
+// Lock % of pool thresholds — measures skin-in-the-game relative to subnet size
+// Conviction v2 migration gave every subnet a lock, so absolute size is meaningless;
+// lock as % of total subnet alpha shows actual commitment
+export const HEAVY_PCT = 0.20;    // lock >= 20% of total subnet alpha
+export const MODERATE_PCT = 0.05; // lock >= 5% of total subnet alpha
+export const LIGHT_PCT = 0.001;   // lock >= 0.1% of total subnet alpha
 
-// Minimum locked_mass (in alpha) to consider a lock "real" vs auto-locked dust
-// Conviction v2 auto-locks owner emission cuts, creating tiny OwnerLock entries for all subnets
-export const MIN_LOCK_THRESHOLDS = [
-  { label: "All", value: 0 },
-  { label: "> 1 \u03B1", value: 1 },
-  { label: "> 10 \u03B1", value: 10 },
-  { label: "> 100 \u03B1", value: 100 },
-  { label: "> 1k \u03B1", value: 1000 },
-];
+// Challenger conviction ratio thresholds (still organic, not affected by migration)
+export const STRONG_THRESHOLD = 0.80;
+export const BUILDING_MIN = 0.01;
 
 // Lock status config
 export const LOCK_STATUS_CONFIG = {
-  strong: {
-    label: "\u{1F7E2} Strong conviction",
+  heavy: {
+    label: "\u{1F7E2} Heavy",
     color: "#33bb66",
     bg: "#0a1a10",
     border: "#1a3a20",
     rowBg: "rgba(51,187,102,0.06)",
   },
-  building: {
-    label: "\u{1F7E1} Building",
+  moderate: {
+    label: "\u{1F7E1} Moderate",
     color: "#ddaa00",
     bg: "#1a1600",
     border: "#3a3000",
     rowBg: "rgba(221,170,0,0.06)",
   },
-  zero: {
-    label: "\u{1F534} Zero conviction",
+  light: {
+    label: "\u{1F7E0} Light",
     color: "#ff8833",
     bg: "#1a0e00",
     border: "#3a2000",
@@ -85,9 +82,10 @@ export const MATURITY_CURVE = [
 
 // Tooltips
 export const TOOLTIPS = {
-  conviction: "Conviction score reflects how long the owner has committed to the subnet. Locking to the owner\u2019s hotkey gives instant conviction. Locking to any other hotkey follows a 90-day maturity curve (Conviction v2). Zero conviction with an active lock means the lock just started.",
-  lockType: "Perpetual locks keep locked_mass constant and grow conviction toward 100%. Decaying locks lose locked_mass over time with a 90-day half-life \u2014 after 6 months only 12.5% remains. Perpetual is opt-in via set_perpetual_lock.",
-  lockStatus: "Subnets with no active lock are exposed to Const\u2019s May 24 2026 emission blocking announcement targeting subnets with no clear path to adding value.",
+  lockPct: "Lock % shows the owner\u2019s locked alpha as a percentage of total subnet alpha (staked + in pool). Higher % = more skin in the game. Conviction v2 gave every subnet a baseline lock; this metric shows which owners are actually committed.",
+  locked: "Total alpha locked by the subnet owner. After the Conviction v2 migration, every subnet has a lock \u2014 the absolute amount matters less than the % of pool.",
+  lockType: "Perpetual locks keep locked_mass constant and grow conviction toward 100%. Decaying locks lose locked_mass over time with a 90-day half-life \u2014 after 6 months only 12.5% remains.",
+  lockStatus: "Heavy (\u226520% of pool) = serious commitment. Moderate (5\u201320%) = meaningful. Light (<5%) = minimal skin in the game. No lock = exposed to emission blocking.",
 };
 
 // Storage pallet/item names for key computation

@@ -1,26 +1,36 @@
-// Conviction Locks Scoring — Lock status classification + summary stats
+// Conviction Locks Scoring — Lock % of pool classification + summary stats
+// Post Conviction v2: every subnet has a lock, so we measure lock as % of total subnet alpha
 
-import { STRONG_THRESHOLD, BUILDING_MIN } from "./constants.js";
+import { HEAVY_PCT, MODERATE_PCT, LIGHT_PCT, STRONG_THRESHOLD, BUILDING_MIN } from "./constants.js";
+
+function num(v) {
+  if (v == null) return 0;
+  const n = typeof v === "string" ? parseFloat(v) : v;
+  return isNaN(n) ? 0 : n;
+}
 
 /**
- * Classify lock status for a single subnet
- * Returns: "strong" | "building" | "zero" | "nolock" | "error"
+ * Classify lock status by lock % of total subnet alpha
+ * Returns: "heavy" | "moderate" | "light" | "nolock" | "error"
  */
 export function classifyLockStatus(entry) {
   if (entry.rpcError) return "error";
-  if (!entry.hasLock) return "nolock";
-  if (entry.locked_mass <= 0) return "nolock";
+  if (!entry.hasLock || entry.locked_mass <= 0) return "nolock";
+  if (!entry.alphaTotal || entry.alphaTotal <= 0) {
+    // No pool data — fall back to absolute: if lock exists, call it light
+    return entry.locked_mass > 0 ? "light" : "nolock";
+  }
 
-  if (entry.conviction <= 0) return "zero";
-
-  const ratio = entry.conviction / entry.locked_mass;
-  if (ratio >= STRONG_THRESHOLD) return "strong";
-  if (ratio >= BUILDING_MIN) return "building";
-  return "zero";
+  const pct = entry.locked_mass / entry.alphaTotal;
+  if (pct >= HEAVY_PCT) return "heavy";
+  if (pct >= MODERATE_PCT) return "moderate";
+  if (pct >= LIGHT_PCT) return "light";
+  return "light"; // has lock but < 0.1% of pool
 }
 
 /**
  * Classify lock status for a challenger hotkey lock
+ * Challengers still use conviction/locked_mass ratio (organic, not affected by migration)
  * Returns: "strong" | "building" | "zero"
  */
 export function classifyChallengerStatus(challenger) {
@@ -33,12 +43,12 @@ export function classifyChallengerStatus(challenger) {
 }
 
 /**
- * Get conviction ratio (0-1) for display
+ * Get lock % of pool (0-1) for display
  */
-export function getConvictionRatio(entry) {
+export function getLockPct(entry) {
   if (!entry.hasLock || entry.locked_mass <= 0) return 0;
-  if (entry.conviction <= 0) return 0;
-  return Math.min(entry.conviction / entry.locked_mass, 1);
+  if (!entry.alphaTotal || entry.alphaTotal <= 0) return 0;
+  return entry.locked_mass / entry.alphaTotal;
 }
 
 /**
@@ -47,7 +57,7 @@ export function getConvictionRatio(entry) {
 export function scoreConviction(convictionData, poolData, subnetMeta) {
   if (!convictionData?.results) return [];
 
-  // Build pool name lookup
+  // Build pool lookup
   const poolMap = {};
   const poolArr = Array.isArray(poolData) ? poolData : (poolData?.data || []);
   poolArr.forEach((p) => {
@@ -69,10 +79,22 @@ export function scoreConviction(convictionData, poolData, subnetMeta) {
             ? entry.name
             : `Subnet ${entry.netuid}`;
 
-    const status = classifyLockStatus(entry);
-    const ratio = getConvictionRatio(entry);
+    // Compute total subnet alpha (same formula as SRI/health tabs)
+    const alphaStaked = pool ? num(pool.alpha_staked) : 0;
+    const alphaInPool = pool ? num(pool.alpha_in_pool) : 0;
+    const alphaTotal = alphaStaked + alphaInPool;
 
-    // Score challenger locks for this subnet
+    // Enrich entry with pool context
+    const enriched = {
+      ...entry,
+      name,
+      alphaTotal,
+    };
+
+    const lockPct = getLockPct(enriched);
+    const status = classifyLockStatus(enriched);
+
+    // Score challenger locks for this subnet (still uses conviction ratio)
     const scoredChallengers = (entry.challengers || []).map((c) => ({
       ...c,
       status: classifyChallengerStatus(c),
@@ -82,10 +104,9 @@ export function scoreConviction(convictionData, poolData, subnetMeta) {
     }));
 
     return {
-      ...entry,
-      name,
+      ...enriched,
+      lockPct,
       status,
-      ratio,
       challengers: scoredChallengers,
     };
   });
@@ -100,10 +121,16 @@ export function computeSummary(scored) {
     (sum, s) => sum + (s.hasLock ? s.locked_mass : 0),
     0
   );
-  const zeroConviction = scored.filter((s) => s.status === "zero").length;
   const noLock = scored.filter((s) => s.status === "nolock").length;
-  const strong = scored.filter((s) => s.status === "strong").length;
-  const building = scored.filter((s) => s.status === "building").length;
+  const heavy = scored.filter((s) => s.status === "heavy").length;
+  const moderate = scored.filter((s) => s.status === "moderate").length;
+  const light = scored.filter((s) => s.status === "light").length;
+
+  // Average lock % (only for subnets with locks and pool data)
+  const withPct = scored.filter((s) => s.hasLock && s.alphaTotal > 0);
+  const avgLockPct = withPct.length > 0
+    ? withPct.reduce((sum, s) => sum + s.lockPct, 0) / withPct.length
+    : 0;
 
   // Challenger stats
   let challengerCount = 0;
@@ -118,10 +145,11 @@ export function computeSummary(scored) {
   return {
     totalWithLock,
     totalLocked,
-    zeroConviction,
     noLock,
-    strong,
-    building,
+    heavy,
+    moderate,
+    light,
+    avgLockPct,
     challengerCount,
     totalChallengerLocked,
     totalSubnets: scored.length,

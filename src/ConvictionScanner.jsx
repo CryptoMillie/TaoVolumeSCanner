@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useSharedData } from "./DataContext.jsx";
 import { fetchConvictionData, forceRefreshConviction } from "./conviction/api.js";
 import { scoreConviction, computeSummary } from "./conviction/scoring.js";
-import { LOCK_STATUS_CONFIG, MATURITY_CURVE, TOOLTIPS, MIN_LOCK_THRESHOLDS } from "./conviction/constants.js";
+import { LOCK_STATUS_CONFIG, MATURITY_CURVE, TOOLTIPS } from "./conviction/constants.js";
 import { fetchDevActivity } from "./gem/api.js";
 import { scoreGems } from "./gem/scoring.js";
 
@@ -15,11 +15,11 @@ function fAlpha(v) {
   return v.toFixed(2) + " \u03B1";
 }
 
-function fAlphaShort(v) {
-  if (v == null || v === 0) return "0.00";
-  if (v >= 1e6) return (v / 1e6).toFixed(1) + "M";
-  if (v >= 1e3) return (v / 1e3).toFixed(1) + "k";
-  return v.toFixed(2);
+function fPct(v) {
+  if (v == null || v === 0) return "0.0%";
+  if (v >= 1) return (v * 100).toFixed(0) + "%";
+  if (v >= 0.01) return (v * 100).toFixed(1) + "%";
+  return (v * 100).toFixed(2) + "%";
 }
 
 function truncAddr(addr) {
@@ -40,7 +40,6 @@ function AnimCounter({ target, suffix = "", decimals = 0, duration = 800 }) {
     const tick = (now) => {
       const elapsed = now - start;
       const progress = Math.min(elapsed / duration, 1);
-      // ease-out cubic
       const eased = 1 - Math.pow(1 - progress, 3);
       setDisplay(from + (target - from) * eased);
       if (progress < 1) ref.current = requestAnimationFrame(tick);
@@ -294,29 +293,24 @@ export default function ConvictionScanner() {
   const [ts, setTs] = useState(null);
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
-  const [sortCol, setSortCol] = useState("locked_mass");
+  const [sortCol, setSortCol] = useState("lockPct");
   const [sortDir, setSortDir] = useState("desc");
   const [expanded, setExpanded] = useState({});
   const [auto, setAuto] = useState(true);
   const [freq, setFreq] = useState(120);
   const [gemNetuids, setGemNetuids] = useState(new Set());
   const [showMaturity, setShowMaturity] = useState(false);
-  const [minLock, setMinLock] = useState(0);
   const timerRef = useRef();
 
   const scan = useCallback(async () => {
     setLoading(true);
     setErr(null);
     try {
-      // Fetch TaoStats data for subnet names
       const tsData = await refreshTaoStats();
       const meta = tsData.meta || {};
       const pools = tsData.pools;
 
-      // Fetch conviction data from RPC
       const convictionData = await fetchConvictionData(meta);
-
-      // Score and classify
       const scored = scoreConviction(convictionData, pools, meta);
       const stats = computeSummary(scored);
 
@@ -368,21 +362,12 @@ export default function ConvictionScanner() {
     }
   };
 
-  // Apply min-lock threshold — subnets below threshold are treated as "nolock" for display
-  const thresholdData = minLock > 0
-    ? data.map((d) =>
-        d.hasLock && d.locked_mass < minLock
-          ? { ...d, _belowThreshold: true, _origStatus: d.status, status: "nolock" }
-          : d
-      )
-    : data;
-
   // Filter
-  let filtered = thresholdData;
-  if (filter === "strong") filtered = thresholdData.filter((d) => d.status === "strong");
-  else if (filter === "building") filtered = thresholdData.filter((d) => d.status === "building");
-  else if (filter === "nolock") filtered = thresholdData.filter((d) => d.status === "nolock");
-  else if (filter === "zero") filtered = thresholdData.filter((d) => d.status === "zero");
+  let filtered = data;
+  if (filter === "heavy") filtered = data.filter((d) => d.status === "heavy");
+  else if (filter === "moderate") filtered = data.filter((d) => d.status === "moderate");
+  else if (filter === "light") filtered = data.filter((d) => d.status === "light");
+  else if (filter === "nolock") filtered = data.filter((d) => d.status === "nolock");
 
   // Search
   if (search.trim()) {
@@ -399,16 +384,17 @@ export default function ConvictionScanner() {
     let av, bv;
     switch (sortCol) {
       case "netuid": av = a.netuid; bv = b.netuid; break;
+      case "lockPct": av = a.lockPct; bv = b.lockPct; break;
       case "locked_mass": av = a.locked_mass; bv = b.locked_mass; break;
-      case "conviction": av = a.conviction; bv = b.conviction; break;
+      case "alphaTotal": av = a.alphaTotal; bv = b.alphaTotal; break;
       case "lockType": av = a.lockType || ""; bv = b.lockType || ""; break;
       case "status": {
-        const order = { strong: 4, building: 3, zero: 2, nolock: 1, error: 0 };
+        const order = { heavy: 4, moderate: 3, light: 2, nolock: 1, error: 0 };
         av = order[a.status] ?? 0;
         bv = order[b.status] ?? 0;
         break;
       }
-      default: av = a.locked_mass; bv = b.locked_mass;
+      default: av = a.lockPct; bv = b.lockPct;
     }
     if (typeof av === "string") {
       return sortDir === "desc" ? bv.localeCompare(av) : av.localeCompare(bv);
@@ -471,7 +457,7 @@ export default function ConvictionScanner() {
           </button>
         </div>
         <div style={S.subtitle}>
-          Active conviction locks from subnet owners across all subnets — direct from Bittensor RPC
+          Owner conviction locks as % of total subnet alpha — skin in the game metric
           {ts && (
             <span style={{ marginLeft: "12px", color: "#333355" }}>
               Last updated: {ts.toLocaleTimeString()}
@@ -481,34 +467,22 @@ export default function ConvictionScanner() {
 
         {/* Controls row */}
         <div style={S.controls}>
-          {/* Filter buttons — counts reflect min-lock threshold */}
+          {/* Filter buttons */}
           <button onClick={() => setFilter("all")} style={S.btn(filter === "all")}>
-            ALL ({thresholdData.length})
+            ALL ({data.length})
           </button>
-          <button onClick={() => setFilter("strong")} style={S.btn(filter === "strong")}>
-            {"\uD83D\uDFE2"} Strong ({thresholdData.filter((d) => d.status === "strong").length})
+          <button onClick={() => setFilter("heavy")} style={S.btn(filter === "heavy")}>
+            {"\uD83D\uDFE2"} Heavy ({summary?.heavy || 0})
           </button>
-          <button onClick={() => setFilter("building")} style={S.btn(filter === "building")}>
-            {"\uD83D\uDFE1"} Building ({thresholdData.filter((d) => d.status === "building").length})
+          <button onClick={() => setFilter("moderate")} style={S.btn(filter === "moderate")}>
+            {"\uD83D\uDFE1"} Moderate ({summary?.moderate || 0})
           </button>
-          <button onClick={() => setFilter("zero")} style={S.btn(filter === "zero")}>
-            {"\uD83D\uDD34"} Zero ({thresholdData.filter((d) => d.status === "zero").length})
+          <button onClick={() => setFilter("light")} style={S.btn(filter === "light")}>
+            {"\uD83D\uDFE0"} Light ({summary?.light || 0})
           </button>
           <button onClick={() => setFilter("nolock")} style={S.btn(filter === "nolock")}>
-            {"\u26A0\uFE0F"} No Lock ({thresholdData.filter((d) => d.status === "nolock").length})
+            {"\u26A0\uFE0F"} No Lock ({summary?.noLock || 0})
           </button>
-
-          {/* Min lock filter — filters out auto-locked dust from Conviction v2 */}
-          <span style={{ color: "#333355", fontSize: "10px", marginLeft: "4px" }}>Min lock:</span>
-          <select
-            value={minLock}
-            onChange={(e) => setMinLock(Number(e.target.value))}
-            style={S.freqSelect}
-          >
-            {MIN_LOCK_THRESHOLDS.map((t) => (
-              <option key={t.value} value={t.value}>{t.label}</option>
-            ))}
-          </select>
 
           {/* Search */}
           <input
@@ -576,52 +550,40 @@ export default function ConvictionScanner() {
       {/* Summary cards */}
       {summary && (
         <div style={S.summaryRow}>
-          <div style={S.card("#5555ff")}>
-            <div style={S.cardLabel}>
-              Subnets with locks
-              {minLock > 0 && <span style={{ color: "#555577" }}>{` (>${minLock} \u03B1)`}</span>}
+          <div style={S.card("#33bb66")}>
+            <div style={S.cardLabel}>Heavy commitment</div>
+            <div style={S.cardValue("#33bb66")}>
+              <AnimCounter target={summary.heavy} />
             </div>
-            <div style={S.cardValue("#5555ff")}>
-              <AnimCounter target={minLock > 0
-                ? thresholdData.filter((d) => d.status !== "nolock" && d.hasLock && d.locked_mass >= minLock).length
-                : summary.totalWithLock
-              } />
-              <span style={{ fontSize: "11px", color: "#333366", marginLeft: "4px" }}>
-                / {summary.totalSubnets}
-              </span>
+            <div style={{ color: "#1a5533", fontSize: "9px", marginTop: "2px" }}>
+              {"\u2265"}20% of pool locked
             </div>
           </div>
 
-          <div style={S.card("#33bb66")}>
-            <div style={S.cardLabel}>Total Alpha Locked</div>
-            <div style={S.cardValue("#33bb66")}>
-              {summary.totalLocked >= 1e6
-                ? <><AnimCounter target={summary.totalLocked / 1e6} decimals={1} suffix="M" /></>
-                : summary.totalLocked >= 1e3
-                  ? <><AnimCounter target={summary.totalLocked / 1e3} decimals={1} suffix="k" /></>
-                  : <AnimCounter target={summary.totalLocked} decimals={2} />
-              }
-              <span style={{ fontSize: "11px", marginLeft: "4px" }}>{"\u03B1"}</span>
+          <div style={S.card("#ddaa00")}>
+            <div style={S.cardLabel}>Moderate</div>
+            <div style={S.cardValue("#ddaa00")}>
+              <AnimCounter target={summary.moderate} />
+            </div>
+            <div style={{ color: "#665500", fontSize: "9px", marginTop: "2px" }}>
+              5–20% of pool locked
             </div>
           </div>
 
           <div style={S.card("#ff8833")}>
-            <div style={S.cardLabel}>Zero Conviction</div>
+            <div style={S.cardLabel}>Light</div>
             <div style={S.cardValue("#ff8833")}>
-              <AnimCounter target={summary.zeroConviction} />
+              <AnimCounter target={summary.light} />
             </div>
             <div style={{ color: "#553311", fontSize: "9px", marginTop: "2px" }}>
-              locked but conviction = 0
+              {"<"}5% of pool locked
             </div>
           </div>
 
-          <div style={S.card("#ff4455")}>
-            <div style={S.cardLabel}>No Lock</div>
-            <div style={S.cardValue("#ff4455")}>
-              <AnimCounter target={summary.noLock} />
-            </div>
-            <div style={{ color: "#551122", fontSize: "9px", marginTop: "2px" }}>
-              exposed to emission blocking
+          <div style={S.card("#5555ff")}>
+            <div style={S.cardLabel}>Avg Lock %</div>
+            <div style={S.cardValue("#5555ff")}>
+              <AnimCounter target={summary.avgLockPct * 100} decimals={1} suffix="%" />
             </div>
           </div>
 
@@ -655,25 +617,27 @@ export default function ConvictionScanner() {
                 <th style={S.th} onClick={() => handleSort("netuid")}>
                   Subnet{sortArrow("netuid")}
                 </th>
-                <th style={S.th}>King</th>
+                <th style={S.th} onClick={() => handleSort("lockPct")}>
+                  <Tooltip text={TOOLTIPS.lockPct}>
+                    Lock %{sortArrow("lockPct")}
+                  </Tooltip>
+                </th>
                 <th style={S.th} onClick={() => handleSort("locked_mass")}>
-                  <Tooltip text={TOOLTIPS.conviction}>
+                  <Tooltip text={TOOLTIPS.locked}>
                     Locked{sortArrow("locked_mass")}
                   </Tooltip>
                 </th>
-                <th style={S.th} onClick={() => handleSort("conviction")}>
-                  <Tooltip text={TOOLTIPS.conviction}>
-                    Conviction{sortArrow("conviction")}
-                  </Tooltip>
+                <th style={S.th} onClick={() => handleSort("alphaTotal")}>
+                  Pool Alpha{sortArrow("alphaTotal")}
                 </th>
                 <th style={S.th} onClick={() => handleSort("lockType")}>
                   <Tooltip text={TOOLTIPS.lockType}>
-                    Lock Type{sortArrow("lockType")}
+                    Type{sortArrow("lockType")}
                   </Tooltip>
                 </th>
                 <th style={S.th} onClick={() => handleSort("status")}>
                   <Tooltip text={TOOLTIPS.lockStatus}>
-                    Lock Status{sortArrow("status")}
+                    Status{sortArrow("status")}
                   </Tooltip>
                 </th>
               </tr>
@@ -703,7 +667,7 @@ export default function ConvictionScanner() {
                           {row.name || "\u2014"}
                         </span>
                         {isGem && (
-                          <span style={{ marginLeft: "6px" }} title="Also in Gem Scan \uD83D\uDC8E Gem Zone">
+                          <span style={{ marginLeft: "6px" }} title="Also in Gem Scan Gem Zone">
                             {"\uD83D\uDC8E"}
                           </span>
                         )}
@@ -726,9 +690,22 @@ export default function ConvictionScanner() {
                         )}
                       </td>
 
-                      {/* King (coldkey) */}
-                      <td style={{ ...S.td, color: "#555577", fontFamily: "'JetBrains Mono',monospace" }}>
-                        {row.hasLock ? "\u2014" : "\u2014"}
+                      {/* Lock % */}
+                      <td style={{ ...S.td, fontWeight: 600 }}>
+                        {row.rpcError ? (
+                          <span style={{ color: "#ff4455" }}>RPC error</span>
+                        ) : row.alphaTotal > 0 ? (
+                          <span style={{
+                            color: row.lockPct >= 0.20 ? "#33bb66"
+                              : row.lockPct >= 0.05 ? "#ddaa00"
+                              : row.lockPct > 0 ? "#ff8833"
+                              : "#333355",
+                          }}>
+                            {fPct(row.lockPct)}
+                          </span>
+                        ) : (
+                          <span style={{ color: "#333355" }}>{"\u2014"}</span>
+                        )}
                       </td>
 
                       {/* Locked */}
@@ -740,24 +717,9 @@ export default function ConvictionScanner() {
                         )}
                       </td>
 
-                      {/* Conviction */}
-                      <td style={{ ...S.td, color: row.conviction > 0 ? "#8888cc" : "#333355" }}>
-                        {row.rpcError ? (
-                          <span style={{ color: "#ff4455" }}>RPC error</span>
-                        ) : (
-                          <>
-                            {fAlpha(row.conviction)}
-                            {row.hasLock && row.locked_mass > 0 && (
-                              <span style={{
-                                marginLeft: "6px",
-                                color: "#444466",
-                                fontSize: "9px",
-                              }}>
-                                ({(row.ratio * 100).toFixed(1)}%)
-                              </span>
-                            )}
-                          </>
-                        )}
+                      {/* Pool Alpha */}
+                      <td style={{ ...S.td, color: row.alphaTotal > 0 ? "#666688" : "#333355" }}>
+                        {row.alphaTotal > 0 ? fAlpha(row.alphaTotal) : "\u2014"}
                       </td>
 
                       {/* Lock Type */}
@@ -771,21 +733,11 @@ export default function ConvictionScanner() {
                         )}
                       </td>
 
-                      {/* Lock Status */}
+                      {/* Status */}
                       <td style={S.td}>
                         <span style={S.badge(statusCfg)}>
                           {statusCfg.label}
                         </span>
-                        {row._belowThreshold && (
-                          <span style={{
-                            marginLeft: "6px",
-                            fontSize: "9px",
-                            color: "#555577",
-                            fontStyle: "italic",
-                          }}>
-                            auto-locked
-                          </span>
-                        )}
                       </td>
                     </tr>
 
@@ -796,18 +748,34 @@ export default function ConvictionScanner() {
                           <div style={{ display: "flex", gap: "32px", flexWrap: "wrap" }}>
                             <div>
                               <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
-                                LOCKED MASS (RAW)
+                                LOCK % OF POOL
                               </div>
                               <div style={{ color: "#8888cc" }}>
-                                {row.hasLock ? row.locked_mass.toFixed(9) + " \u03B1" : "\u2014"}
+                                {row.alphaTotal > 0 ? (row.lockPct * 100).toFixed(4) + "%" : "\u2014"}
                               </div>
                             </div>
                             <div>
                               <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
-                                CONVICTION (RAW)
+                                LOCKED MASS
                               </div>
                               <div style={{ color: "#8888cc" }}>
-                                {row.hasLock ? row.conviction.toFixed(9) : "\u2014"}
+                                {row.hasLock ? row.locked_mass.toFixed(4) + " \u03B1" : "\u2014"}
+                              </div>
+                            </div>
+                            <div>
+                              <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
+                                TOTAL POOL ALPHA
+                              </div>
+                              <div style={{ color: "#8888cc" }}>
+                                {row.alphaTotal > 0 ? fAlpha(row.alphaTotal) : "\u2014"}
+                              </div>
+                            </div>
+                            <div>
+                              <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
+                                CONVICTION
+                              </div>
+                              <div style={{ color: "#8888cc" }}>
+                                {row.hasLock ? row.conviction.toFixed(4) + " \u03B1" : "\u2014"}
                               </div>
                             </div>
                             <div>
@@ -828,16 +796,6 @@ export default function ConvictionScanner() {
                             </div>
                             <div>
                               <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
-                                CONVICTION RATIO
-                              </div>
-                              <div style={{ color: "#8888cc" }}>
-                                {row.hasLock && row.locked_mass > 0
-                                  ? (row.ratio * 100).toFixed(2) + "%"
-                                  : "\u2014"}
-                              </div>
-                            </div>
-                            <div>
-                              <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
                                 LOCK TYPE
                               </div>
                               <div style={{ color: "#8888cc" }}>
@@ -845,19 +803,6 @@ export default function ConvictionScanner() {
                               </div>
                             </div>
                           </div>
-                          {row.status === "zero" && row.hasLock && (
-                            <div style={{
-                              marginTop: "8px",
-                              padding: "6px 10px",
-                              background: "#1a0e00",
-                              border: "1px solid #3a2000",
-                              borderRadius: "3px",
-                              color: "#ff8833",
-                              fontSize: "9px",
-                            }}>
-                              Zero conviction with active lock — this lock just started or is in decaying mode with short elapsed time
-                            </div>
-                          )}
                           {row.status === "nolock" && (
                             <div style={{
                               marginTop: "8px",
@@ -868,7 +813,7 @@ export default function ConvictionScanner() {
                               color: "#ff4455",
                               fontSize: "9px",
                             }}>
-                              No active conviction lock — exposed to emission blocking per Const's May 24 2026 announcement
+                              No active conviction lock — exposed to emission blocking
                             </div>
                           )}
                           {/* Challenger hotkey locks */}
@@ -901,7 +846,7 @@ export default function ConvictionScanner() {
                                 </thead>
                                 <tbody>
                                   {row.challengers.map((ch, ci) => {
-                                    const chCfg = LOCK_STATUS_CONFIG[ch.status] || LOCK_STATUS_CONFIG.zero;
+                                    const chCfg = LOCK_STATUS_CONFIG[ch.status] || LOCK_STATUS_CONFIG.light;
                                     return (
                                       <tr key={ci}>
                                         <td style={{ padding: "4px 8px", fontSize: "10px", color: "#7766cc", fontFamily: "'JetBrains Mono',monospace", borderBottom: "1px solid #0e0e1c" }}>
