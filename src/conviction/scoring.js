@@ -79,9 +79,9 @@ export function scoreConviction(convictionData, poolData, subnetMeta) {
             ? entry.name
             : `Subnet ${entry.netuid}`;
 
-    // Compute total subnet alpha (same formula as SRI/health tabs)
-    const alphaStaked = pool ? num(pool.alpha_staked) : 0;
-    const alphaInPool = pool ? num(pool.alpha_in_pool) : 0;
+    // Compute total subnet alpha — pool API returns rao, locked_mass is already in alpha (rao / 1e9)
+    const alphaStaked = pool ? num(pool.alpha_staked) / 1e9 : 0;
+    const alphaInPool = pool ? num(pool.alpha_in_pool) / 1e9 : 0;
     const alphaTotal = alphaStaked + alphaInPool;
 
     // Enrich entry with pool context
