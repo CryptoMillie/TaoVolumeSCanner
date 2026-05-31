@@ -579,7 +579,7 @@ export default function ConvictionScanner() {
           <div style={S.card("#5555ff")}>
             <div style={S.cardLabel}>
               Subnets with locks
-              {minLock > 0 && <span style={{ color: "#555577" }}> (>{minLock} {"\u03B1"})</span>}
+              {minLock > 0 && <span style={{ color: "#555577" }}>{` (>${minLock} \u03B1)`}</span>}
             </div>
             <div style={S.cardValue("#5555ff")}>
               <AnimCounter target={minLock > 0
