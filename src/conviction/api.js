@@ -282,34 +282,6 @@ export async function fetchConvictionData(subnetMeta) {
       fetchAllStorageEntries(ws, decayingHotkeyPrefix),
     ]);
 
-    // Debug: log raw RPC entry counts and sample data
-    console.log("[Conviction RPC Debug]", {
-      currentBlock,
-      ownerLockKeys: ownerEntries.length,
-      decayingOwnerKeys: decayingEntries.length,
-      hotkeyKeys: hotkeyEntries.length,
-      decayingHotkeyKeys: decayingHotkeyEntries.length,
-      ownerPrefix,
-      sampleOwnerKey: ownerEntries[0]?.key,
-      sampleOwnerValue: ownerEntries[0]?.value,
-      sampleOwnerValueLen: ownerEntries[0]?.value?.replace("0x", "").length / 2,
-    });
-
-    // Debug: log all owner lock netuids + decoded values
-    const debugOwnerLocks = ownerEntries.map((e) => {
-      const nid = extractNetuid(e.key);
-      const decoded = decodeLockState(e.value);
-      return {
-        netuid: nid,
-        keyLen: e.key.replace("0x", "").length,
-        valueLen: e.value.replace("0x", "").length / 2,
-        locked_mass: decoded?.locked_mass,
-        conviction: decoded?.conviction,
-        last_update: decoded?.last_update,
-      };
-    });
-    console.table(debugOwnerLocks);
-
     // Build lock map: netuid -> { lockState, lockType }
     const lockMap = {};
 
