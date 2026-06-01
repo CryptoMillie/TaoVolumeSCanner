@@ -1,7 +1,7 @@
 // Conviction Locks Scoring — Lock % of pool classification + summary stats
 // Post Conviction v2: every subnet has a lock, so we measure lock as % of total subnet alpha
 
-import { HEAVY_PCT, MODERATE_PCT, LIGHT_PCT, STRONG_THRESHOLD, BUILDING_MIN } from "./constants.js";
+import { HEAVY_PCT, MODERATE_PCT, LIGHT_PCT, STRONG_THRESHOLD, BUILDING_MIN, GATE_THRESHOLD } from "./constants.js";
 
 function num(v) {
   if (v == null) return 0;
@@ -49,6 +49,96 @@ export function getLockPct(entry) {
   if (!entry.hasLock || entry.locked_mass <= 0) return 0;
   if (!entry.alphaTotal || entry.alphaTotal <= 0) return 0;
   return entry.locked_mass / entry.alphaTotal;
+}
+
+/**
+ * Categorize hotkey locks into buckets relative to owner hotkey.
+ * Returns { owner, toOwner, challenger, gate, daysToKing, ownerSideConviction, ownerSideLockedMass, hasOwnerHotkey }
+ */
+export function categorizeBuckets(entry) {
+  const ownerHotkey = entry.ownerHotkey;
+  const ownerConviction = entry.conviction || 0;
+  const ownerLockedMass = entry.locked_mass || 0;
+
+  // Owner bucket — from OwnerLock storage directly
+  const owner = {
+    locked_mass: ownerLockedMass,
+    conviction: ownerConviction,
+  };
+
+  // Split hotkey locks by whether they target the owner's hotkey
+  let toOwnerLocks = [];
+  let challengerLocks = [];
+
+  if (ownerHotkey) {
+    for (const ch of (entry.challengers || [])) {
+      if (ch.hotkey && ch.hotkey.toLowerCase() === ownerHotkey.toLowerCase()) {
+        toOwnerLocks.push(ch);
+      } else {
+        challengerLocks.push(ch);
+      }
+    }
+  } else {
+    // No owner hotkey data — all go to challenger (backward compatible)
+    challengerLocks = entry.challengers || [];
+  }
+
+  const toOwner = {
+    locked_mass: toOwnerLocks.reduce((s, c) => s + c.locked_mass, 0),
+    conviction: toOwnerLocks.reduce((s, c) => s + c.conviction, 0),
+    locks: toOwnerLocks,
+  };
+
+  const challenger = {
+    locked_mass: challengerLocks.reduce((s, c) => s + c.locked_mass, 0),
+    conviction: challengerLocks.reduce((s, c) => s + c.conviction, 0),
+    locks: challengerLocks,
+  };
+
+  // Owner-side totals = owner + supporters
+  const ownerSideConviction = ownerConviction + toOwner.conviction;
+  const ownerSideLockedMass = ownerLockedMass + toOwner.locked_mass;
+
+  // 10% Gate check
+  const alphaTotal = entry.alphaTotal || 0;
+  const gate = alphaTotal > 0
+    ? ownerSideConviction >= (alphaTotal * GATE_THRESHOLD)
+    : null;
+
+  // Days-to-King estimate
+  let daysToKing = null;
+  if (challengerLocks.length > 0 && ownerSideConviction > 0) {
+    const topChallenger = challengerLocks.reduce((best, c) =>
+      c.conviction > best.conviction ? c : best, challengerLocks[0]);
+
+    if (topChallenger.conviction >= ownerSideConviction) {
+      daysToKing = 0; // already overtaken
+    } else if (topChallenger.conviction > 0 && topChallenger.locked_mass > 0) {
+      const gap = ownerSideConviction - topChallenger.conviction;
+      const remaining = topChallenger.locked_mass - topChallenger.conviction;
+
+      if (remaining > gap) {
+        // Growth rate: locked_mass * ln(2) / 90 * (1 - conviction/locked_mass)
+        const ratio = topChallenger.conviction / topChallenger.locked_mass;
+        const rate = topChallenger.locked_mass * Math.LN2 / 90 * (1 - ratio);
+        if (rate > 0) {
+          daysToKing = Math.ceil(gap / rate);
+          if (daysToKing > 9999) daysToKing = null;
+        }
+      }
+    }
+  }
+
+  return {
+    owner,
+    toOwner,
+    challenger,
+    gate,
+    daysToKing,
+    ownerSideConviction,
+    ownerSideLockedMass,
+    hasOwnerHotkey: !!ownerHotkey,
+  };
 }
 
 /**
@@ -103,11 +193,15 @@ export function scoreConviction(convictionData, poolData, subnetMeta) {
         : 0,
     }));
 
+    // Categorize into Owner / To-Owner / Challenger buckets
+    const withChallengers = { ...enriched, challengers: scoredChallengers };
+    const buckets = categorizeBuckets(withChallengers);
+
     return {
-      ...enriched,
+      ...withChallengers,
       lockPct,
       status,
-      challengers: scoredChallengers,
+      buckets,
     };
   });
 }
@@ -142,6 +236,23 @@ export function computeSummary(scored) {
     }
   }
 
+  // Bucket-level aggregates
+  let gatePassCount = 0;
+  let gateTotalChecked = 0;
+  let subnetsWithChallengers = 0;
+
+  for (const s of scored) {
+    if (s.buckets) {
+      if (s.buckets.gate !== null) {
+        gateTotalChecked++;
+        if (s.buckets.gate) gatePassCount++;
+      }
+      if (s.buckets.challenger?.locks?.length > 0) {
+        subnetsWithChallengers++;
+      }
+    }
+  }
+
   return {
     totalWithLock,
     totalLocked,
@@ -153,5 +264,8 @@ export function computeSummary(scored) {
     challengerCount,
     totalChallengerLocked,
     totalSubnets: scored.length,
+    gatePassCount,
+    gateTotalChecked,
+    subnetsWithChallengers,
   };
 }

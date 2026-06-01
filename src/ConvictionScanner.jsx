@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useSharedData } from "./DataContext.jsx";
 import { fetchConvictionData, forceRefreshConviction } from "./conviction/api.js";
 import { scoreConviction, computeSummary } from "./conviction/scoring.js";
-import { LOCK_STATUS_CONFIG, MATURITY_CURVE, TOOLTIPS } from "./conviction/constants.js";
+import { LOCK_STATUS_CONFIG, MATURITY_CURVE, TOOLTIPS, BUCKET_CONFIG } from "./conviction/constants.js";
 import { fetchDevActivity } from "./gem/api.js";
 import { scoreGems } from "./gem/scoring.js";
 
@@ -129,6 +129,30 @@ function MaturityPanel() {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ─── Bucket Bar (mini stacked bar for conviction buckets) ─
+
+function BucketBar({ buckets, alphaTotal }) {
+  if (!alphaTotal || alphaTotal <= 0) return <span style={{ color: "#333355" }}>{"\u2014"}</span>;
+
+  const total = buckets.owner.conviction + buckets.toOwner.conviction + buckets.challenger.conviction;
+  if (total <= 0) return <span style={{ color: "#333355" }}>{"\u2014"}</span>;
+
+  const ownerPct = (buckets.owner.conviction / total) * 100;
+  const toOwnerPct = (buckets.toOwner.conviction / total) * 100;
+  const challengerPct = (buckets.challenger.conviction / total) * 100;
+
+  return (
+    <div
+      style={{ display: "flex", height: "12px", width: "80px", borderRadius: "2px", overflow: "hidden", border: "1px solid #1a1a2e" }}
+      title={`Owner: ${ownerPct.toFixed(1)}% | Supporters: ${toOwnerPct.toFixed(1)}% | Challenger: ${challengerPct.toFixed(1)}%`}
+    >
+      {ownerPct > 0 && <div style={{ width: ownerPct + "%", background: BUCKET_CONFIG.owner.color, minWidth: "1px" }} />}
+      {toOwnerPct > 0 && <div style={{ width: toOwnerPct + "%", background: BUCKET_CONFIG.toOwner.color, minWidth: "1px" }} />}
+      {challengerPct > 0 && <div style={{ width: challengerPct + "%", background: BUCKET_CONFIG.challenger.color, minWidth: "1px" }} />}
     </div>
   );
 }
@@ -368,6 +392,7 @@ export default function ConvictionScanner() {
   else if (filter === "moderate") filtered = data.filter((d) => d.status === "moderate");
   else if (filter === "light") filtered = data.filter((d) => d.status === "light");
   else if (filter === "nolock") filtered = data.filter((d) => d.status === "nolock");
+  else if (filter === "challenged") filtered = data.filter((d) => d.buckets?.challenger?.locks?.length > 0);
 
   // Search
   if (search.trim()) {
@@ -394,6 +419,8 @@ export default function ConvictionScanner() {
         bv = order[b.status] ?? 0;
         break;
       }
+      case "gate": av = a.buckets?.gate ? 1 : 0; bv = b.buckets?.gate ? 1 : 0; break;
+      case "daysToKing": av = a.buckets?.daysToKing ?? 9999; bv = b.buckets?.daysToKing ?? 9999; break;
       default: av = a.lockPct; bv = b.lockPct;
     }
     if (typeof av === "string") {
@@ -482,6 +509,9 @@ export default function ConvictionScanner() {
           </button>
           <button onClick={() => setFilter("nolock")} style={S.btn(filter === "nolock")}>
             {"\u26A0\uFE0F"} No Lock ({summary?.noLock || 0})
+          </button>
+          <button onClick={() => setFilter("challenged")} style={S.btn(filter === "challenged")}>
+            {"\u2694\uFE0F"} Challenged ({summary?.subnetsWithChallengers || 0})
           </button>
 
           {/* Search */}
@@ -599,6 +629,28 @@ export default function ConvictionScanner() {
             </div>
           </div>
 
+          <div style={S.card("#66aaff")}>
+            <div style={S.cardLabel}>
+              <Tooltip text={TOOLTIPS.gate}>10% Gate Pass</Tooltip>
+            </div>
+            <div style={S.cardValue("#66aaff")}>
+              <AnimCounter target={summary.gatePassCount} />
+              <span style={{ fontSize: "10px", color: "#334466" }}>
+                /{summary.gateTotalChecked}
+              </span>
+            </div>
+          </div>
+
+          <div style={S.card("#ff6644")}>
+            <div style={S.cardLabel}>Active Challenges</div>
+            <div style={S.cardValue("#ff6644")}>
+              <AnimCounter target={summary.subnetsWithChallengers} />
+            </div>
+            <div style={{ color: "#553322", fontSize: "9px", marginTop: "2px" }}>
+              subnets with challenger locks
+            </div>
+          </div>
+
           <div style={S.card("#333355")}>
             <div style={S.cardLabel}>Last Updated</div>
             <div style={{ color: "#666688", fontSize: "12px", fontWeight: 600, marginTop: "4px" }}>
@@ -638,6 +690,16 @@ export default function ConvictionScanner() {
                 <th style={S.th} onClick={() => handleSort("status")}>
                   <Tooltip text={TOOLTIPS.lockStatus}>
                     Status{sortArrow("status")}
+                  </Tooltip>
+                </th>
+                <th style={S.th} onClick={() => handleSort("gate")}>
+                  <Tooltip text={TOOLTIPS.buckets}>
+                    Buckets{sortArrow("gate")}
+                  </Tooltip>
+                </th>
+                <th style={S.th} onClick={() => handleSort("gate")}>
+                  <Tooltip text={TOOLTIPS.gate}>
+                    Gate{sortArrow("gate")}
                   </Tooltip>
                 </th>
               </tr>
@@ -739,12 +801,32 @@ export default function ConvictionScanner() {
                           {statusCfg.label}
                         </span>
                       </td>
+
+                      {/* Buckets mini-bar */}
+                      <td style={S.td}>
+                        {row.buckets?.hasOwnerHotkey ? (
+                          <BucketBar buckets={row.buckets} alphaTotal={row.alphaTotal} />
+                        ) : (
+                          <span style={{ color: "#333355", fontSize: "9px" }}>--</span>
+                        )}
+                      </td>
+
+                      {/* Gate badge */}
+                      <td style={S.td}>
+                        {row.buckets?.gate === true ? (
+                          <span style={{ color: "#33bb66", fontSize: "10px", fontWeight: 600 }}>PASS</span>
+                        ) : row.buckets?.gate === false ? (
+                          <span style={{ color: "#ff4455", fontSize: "10px", fontWeight: 600 }}>FAIL</span>
+                        ) : (
+                          <span style={{ color: "#333355" }}>{"\u2014"}</span>
+                        )}
+                      </td>
                     </tr>
 
                     {/* Expanded detail row */}
                     {isExpanded && (
                       <tr>
-                        <td colSpan={6} style={S.expandedRow}>
+                        <td colSpan={8} style={S.expandedRow}>
                           <div style={{ display: "flex", gap: "32px", flexWrap: "wrap" }}>
                             <div>
                               <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
@@ -816,8 +898,212 @@ export default function ConvictionScanner() {
                               No active conviction lock — exposed to emission blocking
                             </div>
                           )}
-                          {/* Challenger hotkey locks */}
-                          {row.challengers && row.challengers.length > 0 && (
+                          {/* Conviction Buckets breakdown */}
+                          {row.buckets?.hasOwnerHotkey && (
+                            <div style={{
+                              marginTop: "12px",
+                              padding: "8px 12px",
+                              background: "#0a0a18",
+                              border: "1px solid #1a1a2e",
+                              borderRadius: "4px",
+                            }}>
+                              <div style={{ color: "#5555ff", fontSize: "10px", fontWeight: 700, marginBottom: "8px", letterSpacing: "0.08em" }}>
+                                CONVICTION BUCKETS
+                              </div>
+                              <div style={{ display: "flex", gap: "24px", flexWrap: "wrap" }}>
+                                <div>
+                                  <div style={{ color: BUCKET_CONFIG.owner.color, fontSize: "9px", fontWeight: 600 }}>OWNER</div>
+                                  <div style={{ color: "#8888cc", fontSize: "10px" }}>
+                                    {fAlpha(row.buckets.owner.conviction)} conviction
+                                  </div>
+                                  <div style={{ color: "#555577", fontSize: "9px" }}>
+                                    {fAlpha(row.buckets.owner.locked_mass)} locked
+                                  </div>
+                                </div>
+                                <div>
+                                  <div style={{ color: BUCKET_CONFIG.toOwner.color, fontSize: "9px", fontWeight: 600 }}>
+                                    TO-OWNER ({row.buckets.toOwner.locks.length} supporter{row.buckets.toOwner.locks.length !== 1 ? "s" : ""})
+                                  </div>
+                                  <div style={{ color: "#8888cc", fontSize: "10px" }}>
+                                    {fAlpha(row.buckets.toOwner.conviction)} conviction
+                                  </div>
+                                  <div style={{ color: "#555577", fontSize: "9px" }}>
+                                    {fAlpha(row.buckets.toOwner.locked_mass)} locked
+                                  </div>
+                                </div>
+                                <div>
+                                  <div style={{ color: BUCKET_CONFIG.challenger.color, fontSize: "9px", fontWeight: 600 }}>
+                                    CHALLENGER ({row.buckets.challenger.locks.length} hotkey{row.buckets.challenger.locks.length !== 1 ? "s" : ""})
+                                  </div>
+                                  <div style={{ color: "#8888cc", fontSize: "10px" }}>
+                                    {fAlpha(row.buckets.challenger.conviction)} conviction
+                                  </div>
+                                  <div style={{ color: "#555577", fontSize: "9px" }}>
+                                    {fAlpha(row.buckets.challenger.locked_mass)} locked
+                                  </div>
+                                </div>
+                                <div>
+                                  <div style={{ color: "#ff8833", fontSize: "9px", fontWeight: 600 }}>
+                                    <Tooltip text={TOOLTIPS.daysToKing}>DAYS TO KING</Tooltip>
+                                  </div>
+                                  <div style={{
+                                    color: row.buckets.daysToKing === 0 ? "#ff4455" : "#8888cc",
+                                    fontSize: "12px",
+                                    fontWeight: 600,
+                                  }}>
+                                    {row.buckets.daysToKing === 0
+                                      ? "OVERTAKEN"
+                                      : row.buckets.daysToKing != null
+                                        ? `~${row.buckets.daysToKing}d`
+                                        : "\u2014 safe"}
+                                  </div>
+                                </div>
+                                <div>
+                                  <div style={{ color: "#66aaff", fontSize: "9px", fontWeight: 600 }}>
+                                    <Tooltip text={TOOLTIPS.gate}>10% GATE</Tooltip>
+                                  </div>
+                                  <div style={{
+                                    color: row.buckets.gate ? "#33bb66" : "#ff4455",
+                                    fontSize: "12px",
+                                    fontWeight: 600,
+                                  }}>
+                                    {row.buckets.gate === true ? "PASS" : row.buckets.gate === false ? "FAIL" : "\u2014"}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Supporter locks (to-owner hotkey) */}
+                          {row.buckets?.hasOwnerHotkey && row.buckets.toOwner.locks.length > 0 && (
+                            <div style={{
+                              marginTop: "12px",
+                              padding: "8px 12px",
+                              background: "#080a18",
+                              border: "1px solid #1a2a44",
+                              borderRadius: "4px",
+                            }}>
+                              <div style={{
+                                color: "#66aaff",
+                                fontSize: "10px",
+                                fontWeight: 700,
+                                marginBottom: "6px",
+                                letterSpacing: "0.08em",
+                              }}>
+                                SUPPORTER LOCKS — TO OWNER HOTKEY ({row.buckets.toOwner.locks.length})
+                              </div>
+                              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                                <thead>
+                                  <tr>
+                                    <th style={{ ...S.th, fontSize: "8px", padding: "4px 8px", borderBottom: "1px solid #1a1a2e" }}>HOTKEY</th>
+                                    <th style={{ ...S.th, fontSize: "8px", padding: "4px 8px", borderBottom: "1px solid #1a1a2e" }}>LOCKED</th>
+                                    <th style={{ ...S.th, fontSize: "8px", padding: "4px 8px", borderBottom: "1px solid #1a1a2e" }}>CONVICTION</th>
+                                    <th style={{ ...S.th, fontSize: "8px", padding: "4px 8px", borderBottom: "1px solid #1a1a2e" }}>TYPE</th>
+                                    <th style={{ ...S.th, fontSize: "8px", padding: "4px 8px", borderBottom: "1px solid #1a1a2e" }}>STATUS</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {row.buckets.toOwner.locks.map((ch, ci) => {
+                                    const chCfg = LOCK_STATUS_CONFIG[ch.status] || LOCK_STATUS_CONFIG.light;
+                                    return (
+                                      <tr key={ci}>
+                                        <td style={{ padding: "4px 8px", fontSize: "10px", color: "#6688cc", fontFamily: "'JetBrains Mono',monospace", borderBottom: "1px solid #0e0e1c" }}>
+                                          {truncAddr(ch.hotkey)}
+                                        </td>
+                                        <td style={{ padding: "4px 8px", fontSize: "10px", color: "#b0b0cc", borderBottom: "1px solid #0e0e1c" }}>
+                                          {fAlpha(ch.locked_mass)}
+                                        </td>
+                                        <td style={{ padding: "4px 8px", fontSize: "10px", color: "#8888cc", borderBottom: "1px solid #0e0e1c" }}>
+                                          {fAlpha(ch.conviction)}
+                                          {ch.locked_mass > 0 && (
+                                            <span style={{ marginLeft: "4px", color: "#444466", fontSize: "9px" }}>
+                                              ({(ch.ratio * 100).toFixed(1)}%)
+                                            </span>
+                                          )}
+                                        </td>
+                                        <td style={{ padding: "4px 8px", fontSize: "10px", borderBottom: "1px solid #0e0e1c" }}>
+                                          {ch.lockType === "perpetual"
+                                            ? <span style={{ color: "#33bb66" }}>Perpetual</span>
+                                            : <span style={{ color: "#ddaa00" }}>Decaying</span>
+                                          }
+                                        </td>
+                                        <td style={{ padding: "4px 8px", borderBottom: "1px solid #0e0e1c" }}>
+                                          <span style={S.badge(chCfg)}>{chCfg.label}</span>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+
+                          {/* Challenger hotkey locks — use bucket data if available */}
+                          {row.buckets?.hasOwnerHotkey ? (
+                            row.buckets.challenger.locks.length > 0 && (
+                            <div style={{
+                              marginTop: "12px",
+                              padding: "8px 12px",
+                              background: "#0c0818",
+                              border: "1px solid #2a1a44",
+                              borderRadius: "4px",
+                            }}>
+                              <div style={{
+                                color: "#ff6644",
+                                fontSize: "10px",
+                                fontWeight: 700,
+                                marginBottom: "6px",
+                                letterSpacing: "0.08em",
+                              }}>
+                                CHALLENGER LOCKS — NON-OWNER HOTKEYS ({row.buckets.challenger.locks.length})
+                              </div>
+                              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                                <thead>
+                                  <tr>
+                                    <th style={{ ...S.th, fontSize: "8px", padding: "4px 8px", borderBottom: "1px solid #1a1a2e" }}>HOTKEY</th>
+                                    <th style={{ ...S.th, fontSize: "8px", padding: "4px 8px", borderBottom: "1px solid #1a1a2e" }}>LOCKED</th>
+                                    <th style={{ ...S.th, fontSize: "8px", padding: "4px 8px", borderBottom: "1px solid #1a1a2e" }}>CONVICTION</th>
+                                    <th style={{ ...S.th, fontSize: "8px", padding: "4px 8px", borderBottom: "1px solid #1a1a2e" }}>TYPE</th>
+                                    <th style={{ ...S.th, fontSize: "8px", padding: "4px 8px", borderBottom: "1px solid #1a1a2e" }}>STATUS</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {row.buckets.challenger.locks.map((ch, ci) => {
+                                    const chCfg = LOCK_STATUS_CONFIG[ch.status] || LOCK_STATUS_CONFIG.light;
+                                    return (
+                                      <tr key={ci}>
+                                        <td style={{ padding: "4px 8px", fontSize: "10px", color: "#7766cc", fontFamily: "'JetBrains Mono',monospace", borderBottom: "1px solid #0e0e1c" }}>
+                                          {truncAddr(ch.hotkey)}
+                                        </td>
+                                        <td style={{ padding: "4px 8px", fontSize: "10px", color: "#b0b0cc", borderBottom: "1px solid #0e0e1c" }}>
+                                          {fAlpha(ch.locked_mass)}
+                                        </td>
+                                        <td style={{ padding: "4px 8px", fontSize: "10px", color: "#8888cc", borderBottom: "1px solid #0e0e1c" }}>
+                                          {fAlpha(ch.conviction)}
+                                          {ch.locked_mass > 0 && (
+                                            <span style={{ marginLeft: "4px", color: "#444466", fontSize: "9px" }}>
+                                              ({(ch.ratio * 100).toFixed(1)}%)
+                                            </span>
+                                          )}
+                                        </td>
+                                        <td style={{ padding: "4px 8px", fontSize: "10px", borderBottom: "1px solid #0e0e1c" }}>
+                                          {ch.lockType === "perpetual"
+                                            ? <span style={{ color: "#33bb66" }}>Perpetual</span>
+                                            : <span style={{ color: "#ddaa00" }}>Decaying</span>
+                                          }
+                                        </td>
+                                        <td style={{ padding: "4px 8px", borderBottom: "1px solid #0e0e1c" }}>
+                                          <span style={S.badge(chCfg)}>{chCfg.label}</span>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )) : (
+                          /* Fallback: existing challenger table when no bucket data */
+                          row.challengers && row.challengers.length > 0 && (
                             <div style={{
                               marginTop: "12px",
                               padding: "8px 12px",
@@ -878,6 +1164,7 @@ export default function ConvictionScanner() {
                                 </tbody>
                               </table>
                             </div>
+                          )
                           )}
                         </td>
                       </tr>

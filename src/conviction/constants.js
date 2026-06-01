@@ -86,6 +86,34 @@ export const TOOLTIPS = {
   locked: "Total alpha locked by the subnet owner. After the Conviction v2 migration, every subnet has a lock \u2014 the absolute amount matters less than the % of pool.",
   lockType: "Perpetual locks keep locked_mass constant and grow conviction toward 100%. Decaying locks lose locked_mass over time with a 90-day half-life \u2014 after 6 months only 12.5% remains.",
   lockStatus: "Heavy (\u226520% of pool) = serious commitment. Moderate (5\u201320%) = meaningful. Light (<5%) = minimal skin in the game. No lock = exposed to emission blocking.",
+  buckets: "Owner = subnet owner\u2019s own lock. To-Owner = other coldkeys supporting the owner\u2019s hotkey. Challenger = locks to non-owner hotkeys competing for kingship.",
+  daysToKing: "Estimated days until the largest challenger\u2019s conviction overtakes the owner\u2019s total conviction (owner lock + supporter locks). Based on current conviction growth rates.",
+  gate: "Whether the combined owner-side conviction (owner + supporters) meets the 10% of alpha-out threshold for full emission flow.",
+};
+
+// 10% gate threshold — owner-side conviction must be >= 10% of alpha-out
+export const GATE_THRESHOLD = 0.10;
+
+// Bucket config for 3-bucket conviction model (Owner / To-Owner / Challenger)
+export const BUCKET_CONFIG = {
+  owner: {
+    label: "Owner",
+    color: "#33bb66",
+    bg: "#0a1a10",
+    border: "#1a3a20",
+  },
+  toOwner: {
+    label: "To-Owner",
+    color: "#66aaff",
+    bg: "#0a1020",
+    border: "#1a2a44",
+  },
+  challenger: {
+    label: "Challenger",
+    color: "#ff6644",
+    bg: "#1a0e0a",
+    border: "#3a2010",
+  },
 };
 
 // Storage pallet/item names for key computation
@@ -94,3 +122,4 @@ export const STORAGE_OWNER_LOCK = "OwnerLock";
 export const STORAGE_DECAYING_OWNER_LOCK = "DecayingOwnerLock";
 export const STORAGE_HOTKEY_LOCK = "HotkeyLock";
 export const STORAGE_DECAYING_HOTKEY_LOCK = "DecayingHotkeyLock";
+export const STORAGE_SUBNET_OWNER_HOTKEY = "SubnetOwnerHotkey";
