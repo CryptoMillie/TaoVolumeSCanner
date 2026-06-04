@@ -8,6 +8,7 @@ import AlphaScanner from "./AlphaScanner.jsx";
 import PurityScanner from "./PurityScanner.jsx";
 import GemScanner from "./GemScanner.jsx";
 import ConvictionScanner from "./ConvictionScanner.jsx";
+import BurnScanner from "./BurnScanner.jsx";
 
 const TAB_STYLE = (active) => ({
   background: active ? "#1818cc" : "transparent",
@@ -65,9 +66,12 @@ export default function App() {
         <button onClick={() => setTab("conviction")} style={TAB_STYLE(tab === "conviction")}>
           CONVICTION LOCKS {"\uD83D\uDD12"}
         </button>
+        <button onClick={() => setTab("burn")} style={TAB_STYLE(tab === "burn")}>
+          BURN SCANNER {"\uD83D\uDD25"}
+        </button>
       </div>
 
-      {tab === "volume" ? <VolumeScanner /> : tab === "sri" ? <SRIScanner /> : tab === "health" ? <HealthScanner /> : tab === "intel" ? <IntelScanner /> : tab === "alpha" ? <AlphaScanner /> : tab === "purity" ? <PurityScanner /> : tab === "gem" ? <GemScanner /> : tab === "conviction" ? <ConvictionScanner /> : <VolumeScanner />}
+      {tab === "volume" ? <VolumeScanner /> : tab === "sri" ? <SRIScanner /> : tab === "health" ? <HealthScanner /> : tab === "intel" ? <IntelScanner /> : tab === "alpha" ? <AlphaScanner /> : tab === "purity" ? <PurityScanner /> : tab === "gem" ? <GemScanner /> : tab === "conviction" ? <ConvictionScanner /> : tab === "burn" ? <BurnScanner /> : <VolumeScanner />}
     </div>
     </DataProvider>
   );
