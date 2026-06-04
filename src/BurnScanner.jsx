@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useSharedData } from "./DataContext.jsx";
-import { fetchBurnData, forceRefreshBurn } from "./burn/api.js";
 import { scoreBurns, computeBurnSummary } from "./burn/scoring.js";
 import { BURN_STATUS_CONFIG, TOOLTIPS } from "./burn/constants.js";
 
@@ -259,11 +258,11 @@ export default function BurnScanner() {
   const [ts, setTs] = useState(null);
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
-  const [sortCol, setSortCol] = useState("burnPct");
+  const [sortCol, setSortCol] = useState("incentiveBurn");
   const [sortDir, setSortDir] = useState("desc");
   const [expanded, setExpanded] = useState({});
   const [auto, setAuto] = useState(true);
-  const [freq, setFreq] = useState(300);
+  const [freq, setFreq] = useState(120);
   const timerRef = useRef();
 
   const scan = useCallback(async () => {
@@ -275,8 +274,7 @@ export default function BurnScanner() {
       const pools = tsData.pools;
       const subnets = tsData.subnets;
 
-      const burnData = await fetchBurnData(subnets);
-      const scored = scoreBurns(burnData.historyMap, subnets, pools, meta);
+      const scored = scoreBurns(subnets, pools, meta);
       const stats = computeBurnSummary(scored);
 
       setData(scored);
@@ -293,7 +291,7 @@ export default function BurnScanner() {
     scan();
   }, []);
 
-  // Auto-refresh (5min default due to heavier API load)
+  // Auto-refresh
   useEffect(() => {
     clearInterval(timerRef.current);
     if (auto) timerRef.current = setInterval(scan, freq * 1000);
@@ -319,7 +317,6 @@ export default function BurnScanner() {
   else if (filter === "moderate") filtered = data.filter((d) => d.status === "moderate");
   else if (filter === "light") filtered = data.filter((d) => d.status === "light");
   else if (filter === "minimal") filtered = data.filter((d) => d.status === "minimal");
-  else if (filter === "nodata") filtered = data.filter((d) => d.status === "nodata");
 
   // Search
   if (search.trim()) {
@@ -336,18 +333,19 @@ export default function BurnScanner() {
     let av, bv;
     switch (sortCol) {
       case "netuid": av = a.netuid; bv = b.netuid; break;
-      case "burnPct": av = a.burnPct; bv = b.burnPct; break;
-      case "derivedBurn": av = a.derivedBurn; bv = b.derivedBurn; break;
-      case "taoValue": av = a.taoValue; bv = b.taoValue; break;
-      case "burnDays": av = a.burnDays; bv = b.burnDays; break;
       case "incentiveBurn": av = a.incentiveBurn; bv = b.incentiveBurn; break;
+      case "recycledLifetime": av = a.recycledLifetime; bv = b.recycledLifetime; break;
+      case "recycled24h": av = a.recycled24h; bv = b.recycled24h; break;
+      case "estimated30dBurn": av = a.estimated30dBurn; bv = b.estimated30dBurn; break;
+      case "taoValue30d": av = a.taoValue30d; bv = b.taoValue30d; break;
+      case "burnPerDay": av = a.burnPerDay; bv = b.burnPerDay; break;
       case "status": {
         const order = { heavy: 4, moderate: 3, light: 2, minimal: 1, nodata: 0 };
         av = order[a.status] ?? 0;
         bv = order[b.status] ?? 0;
         break;
       }
-      default: av = a.burnPct; bv = b.burnPct;
+      default: av = a.incentiveBurn; bv = b.incentiveBurn;
     }
     if (typeof av === "string") {
       return sortDir === "desc" ? bv.localeCompare(av) : av.localeCompare(bv);
@@ -379,39 +377,9 @@ export default function BurnScanner() {
           >
             {loading ? "SCANNING\u2026" : "SCAN"}
           </button>
-          <button
-            onClick={async () => {
-              setLoading(true);
-              setErr(null);
-              try {
-                const tsData = await refreshTaoStats();
-                const meta = tsData.meta || {};
-                const pools = tsData.pools;
-                const subnets = tsData.subnets;
-                const burnData = await forceRefreshBurn(subnets);
-                const scored = scoreBurns(burnData.historyMap, subnets, pools, meta);
-                const stats = computeBurnSummary(scored);
-                setData(scored);
-                setSummary(stats);
-                setTs(new Date());
-              } catch (e) {
-                setErr(e.message);
-              } finally {
-                setLoading(false);
-              }
-            }}
-            disabled={loading}
-            style={{
-              ...S.btn(false),
-              opacity: loading ? 0.5 : 1,
-              fontSize: "10px",
-            }}
-          >
-            FORCE REFRESH
-          </button>
         </div>
         <div style={S.subtitle}>
-          Manual alpha burns per subnet — derived from pool history vs expected emission over 30 days
+          Incentive burn rates and recycled alpha per subnet — deflationary pressure from owner-set burn parameters
           {ts && (
             <span style={{ marginLeft: "12px", color: "#333355" }}>
               Last updated: {ts.toLocaleTimeString()}
@@ -436,9 +404,6 @@ export default function BurnScanner() {
           </button>
           <button onClick={() => setFilter("minimal")} style={S.btn(filter === "minimal")}>
             {"\u26AA"} Minimal ({summary?.minimal || 0})
-          </button>
-          <button onClick={() => setFilter("nodata")} style={S.btn(filter === "nodata")}>
-            {"\u2014"} No Data ({summary?.nodata || 0})
           </button>
 
           {/* Search */}
@@ -468,10 +433,10 @@ export default function BurnScanner() {
               onChange={(e) => setFreq(Number(e.target.value))}
               style={S.freqSelect}
             >
+              <option value={60}>60s</option>
               <option value={120}>120s</option>
               <option value={300}>5m</option>
               <option value={600}>10m</option>
-              <option value={900}>15m</option>
             </select>
           </div>
         </div>
@@ -491,7 +456,7 @@ export default function BurnScanner() {
       {loading && data.length === 0 && (
         <div style={S.loading}>
           <div style={{ animation: "pulse 1.5s infinite" }}>
-            Fetching pool history and computing burn metrics...
+            Loading subnet burn data...
           </div>
         </div>
       )}
@@ -500,47 +465,56 @@ export default function BurnScanner() {
       {summary && (
         <div style={S.summaryRow}>
           <div style={S.card("#ff6633")}>
-            <div style={S.cardLabel}>Total Alpha Burned</div>
+            <div style={S.cardLabel}>Lifetime Recycled</div>
             <div style={S.cardValue("#ff6633")}>
-              <AnimCounter target={summary.totalBurned >= 1000 ? Math.round(summary.totalBurned / 1000) : Math.round(summary.totalBurned)} suffix={summary.totalBurned >= 1000 ? "k \u03B1" : " \u03B1"} />
+              <AnimCounter target={summary.totalRecycledLifetime >= 1000 ? Math.round(summary.totalRecycledLifetime / 1000) : Math.round(summary.totalRecycledLifetime)} suffix={summary.totalRecycledLifetime >= 1000 ? "k \u03B1" : " \u03B1"} />
+            </div>
+            <div style={{ color: "#553311", fontSize: "9px", marginTop: "2px" }}>
+              total alpha burned all-time
             </div>
           </div>
 
           <div style={S.card("#ddaa00")}>
-            <div style={S.cardLabel}>TAO Value</div>
+            <div style={S.cardLabel}>Est. 30d Burn</div>
             <div style={S.cardValue("#ddaa00")}>
-              <AnimCounter target={summary.totalTaoValue >= 1000 ? Math.round(summary.totalTaoValue / 1000) : Math.round(summary.totalTaoValue)} suffix={summary.totalTaoValue >= 1000 ? "k \u03C4" : " \u03C4"} />
+              <AnimCounter target={summary.totalEst30dBurn >= 1000 ? Math.round(summary.totalEst30dBurn / 1000) : Math.round(summary.totalEst30dBurn)} suffix={summary.totalEst30dBurn >= 1000 ? "k \u03B1" : " \u03B1"} />
+            </div>
+            <div style={{ color: "#665500", fontSize: "9px", marginTop: "2px" }}>
+              projected from current rates
             </div>
           </div>
 
           <div style={S.card("#ff4422")}>
-            <div style={S.cardLabel}>Heavy Burn Count</div>
+            <div style={S.cardLabel}>Heavy Burners</div>
             <div style={S.cardValue("#ff4422")}>
               <AnimCounter target={summary.heavy} />
             </div>
             <div style={{ color: "#552211", fontSize: "9px", marginTop: "2px" }}>
-              {"\u2265"}50% of emission burned
+              {"\u2265"}50% incentive burn rate
             </div>
           </div>
 
           <div style={S.card("#5555ff")}>
-            <div style={S.cardLabel}>Avg Burn Rate</div>
+            <div style={S.cardLabel}>Avg Incentive Burn</div>
             <div style={S.cardValue("#5555ff")}>
-              <AnimCounter target={summary.avgBurnPct * 100} decimals={1} suffix="%" />
+              <AnimCounter target={summary.avgIncentiveBurn * 100} decimals={1} suffix="%" />
+            </div>
+            <div style={{ color: "#222244", fontSize: "9px", marginTop: "2px" }}>
+              across {summary.withBurn} subnets with burns
             </div>
           </div>
 
           <div style={S.card("#9966ff")}>
-            <div style={S.cardLabel}>Avg Incentive Burn</div>
+            <div style={S.cardLabel}>Est. 30d TAO Value</div>
             <div style={S.cardValue("#9966ff")}>
-              <AnimCounter target={summary.avgIncentiveBurn * 100} decimals={1} suffix="%" />
+              <AnimCounter target={summary.totalEst30dTaoValue >= 1000 ? Math.round(summary.totalEst30dTaoValue / 1000) : Math.round(summary.totalEst30dTaoValue)} suffix={summary.totalEst30dTaoValue >= 1000 ? "k \u03C4" : " \u03C4"} />
             </div>
           </div>
 
           <div style={S.card("#33bb66")}>
-            <div style={S.cardLabel}>Subnets With Data</div>
+            <div style={S.cardLabel}>Subnets With Burns</div>
             <div style={S.cardValue("#33bb66")}>
-              <AnimCounter target={summary.withData} />
+              <AnimCounter target={summary.withBurn} />
               <span style={{ fontSize: "10px", color: "#1a5533" }}>
                 /{summary.total}
               </span>
@@ -563,36 +537,36 @@ export default function BurnScanner() {
                     Status{sortArrow("status")}
                   </Tooltip>
                 </th>
-                <th style={S.th} onClick={() => handleSort("burnPct")}>
-                  <Tooltip text={TOOLTIPS.burnPct}>
-                    Burn %{sortArrow("burnPct")}
-                  </Tooltip>
-                </th>
-                <th style={S.th} onClick={() => handleSort("derivedBurn")}>
-                  <Tooltip text={TOOLTIPS.burned30d}>
-                    Burned 30d{sortArrow("derivedBurn")}
-                  </Tooltip>
-                </th>
-                <th style={S.th} onClick={() => handleSort("taoValue")}>
-                  <Tooltip text={TOOLTIPS.taoValue}>
-                    TAO Value{sortArrow("taoValue")}
-                  </Tooltip>
-                </th>
-                <th style={S.th} onClick={() => handleSort("burnDays")}>
-                  <Tooltip text={TOOLTIPS.burnDays}>
-                    Burn Days{sortArrow("burnDays")}
-                  </Tooltip>
-                </th>
                 <th style={S.th} onClick={() => handleSort("incentiveBurn")}>
                   <Tooltip text={TOOLTIPS.incentiveBurn}>
                     Incentive Burn{sortArrow("incentiveBurn")}
+                  </Tooltip>
+                </th>
+                <th style={S.th} onClick={() => handleSort("recycledLifetime")}>
+                  <Tooltip text="Total alpha recycled (burned) since subnet registration. This is the cumulative on-chain burn counter.">
+                    Recycled Lifetime{sortArrow("recycledLifetime")}
+                  </Tooltip>
+                </th>
+                <th style={S.th} onClick={() => handleSort("recycled24h")}>
+                  <Tooltip text="Alpha recycled in the last 24 hours. Shows current burn activity.">
+                    Recycled 24h{sortArrow("recycled24h")}
+                  </Tooltip>
+                </th>
+                <th style={S.th} onClick={() => handleSort("estimated30dBurn")}>
+                  <Tooltip text={TOOLTIPS.burned30d}>
+                    Est. 30d Burn{sortArrow("estimated30dBurn")}
+                  </Tooltip>
+                </th>
+                <th style={S.th} onClick={() => handleSort("taoValue30d")}>
+                  <Tooltip text={TOOLTIPS.taoValue}>
+                    TAO Value{sortArrow("taoValue30d")}
                   </Tooltip>
                 </th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((row, i) => {
-                const statusCfg = BURN_STATUS_CONFIG[row.status] || BURN_STATUS_CONFIG.nodata;
+                const statusCfg = BURN_STATUS_CONFIG[row.status] || BURN_STATUS_CONFIG.minimal;
                 const isExpanded = expanded[row.netuid];
 
                 return (
@@ -622,59 +596,42 @@ export default function BurnScanner() {
                         </span>
                       </td>
 
-                      {/* Burn % */}
-                      <td style={{ ...S.td, fontWeight: 600 }}
-                        title={row.hasData ? `${fAlpha(row.derivedBurn)} burned over ${Math.round(row.daysOfData)} days (~${fTao(row.taoValue)}). ${row.burnDays} of ${row.dataPoints - 1} intervals had manual burns.` : ""}
-                      >
-                        {row.hasData ? (
-                          <span style={{
-                            color: row.burnPct >= 0.50 ? "#ff4422"
-                              : row.burnPct >= 0.20 ? "#ddaa00"
-                              : row.burnPct >= 0.05 ? "#ff8833"
-                              : "#555577",
-                          }}>
-                            {fPct(row.burnPct)}
-                          </span>
-                        ) : (
-                          <span style={{ color: "#333355" }}>{"\u2014"}</span>
-                        )}
-                      </td>
-
-                      {/* Burned 30d */}
-                      <td style={{ ...S.td, color: row.derivedBurn > 0 ? "#b0b0cc" : "#333355" }}>
-                        {row.hasData ? fAlpha(row.derivedBurn) : "\u2014"}
-                      </td>
-
-                      {/* TAO Value */}
-                      <td style={{ ...S.td, color: row.taoValue > 0 ? "#ddaa00" : "#333355" }}>
-                        {row.hasData && row.taoValue > 0 ? fTao(row.taoValue) : "\u2014"}
-                      </td>
-
-                      {/* Burn Days */}
-                      <td style={{ ...S.td, color: row.burnDays > 0 ? "#b0b0cc" : "#333355" }}>
-                        {row.hasData ? (
-                          <span>
-                            {row.burnDays}
-                            <span style={{ color: "#444466", fontSize: "9px" }}>
-                              /{row.dataPoints - 1}
-                            </span>
-                          </span>
-                        ) : "\u2014"}
-                      </td>
-
                       {/* Incentive Burn */}
-                      <td style={{ ...S.td, fontWeight: row.incentiveBurn > 0 ? 600 : 400 }}>
+                      <td style={{ ...S.td, fontWeight: 600 }}
+                        title={row.incentiveBurn > 0 ? `${fPct(row.incentiveBurn)} of miner incentive is burned. Est. ${fAlpha(row.burnPerDay)}/day burned.` : ""}
+                      >
                         {row.incentiveBurn > 0 ? (
                           <span style={{
                             color: row.incentiveBurn >= 0.50 ? "#ff4422"
-                              : row.incentiveBurn >= 0.10 ? "#ddaa00"
-                              : "#ff8833",
+                              : row.incentiveBurn >= 0.20 ? "#ddaa00"
+                              : row.incentiveBurn >= 0.05 ? "#ff8833"
+                              : "#555577",
                           }}>
                             {fPct(row.incentiveBurn)}
                           </span>
                         ) : (
                           <span style={{ color: "#333355" }}>0%</span>
                         )}
+                      </td>
+
+                      {/* Recycled Lifetime */}
+                      <td style={{ ...S.td, color: row.recycledLifetime > 0 ? "#b0b0cc" : "#333355" }}>
+                        {row.recycledLifetime > 0 ? fAlpha(row.recycledLifetime) : "\u2014"}
+                      </td>
+
+                      {/* Recycled 24h */}
+                      <td style={{ ...S.td, color: row.recycled24h > 0 ? "#ff8833" : "#333355" }}>
+                        {row.recycled24h > 0 ? fAlpha(row.recycled24h) : "\u2014"}
+                      </td>
+
+                      {/* Est. 30d Burn */}
+                      <td style={{ ...S.td, color: row.estimated30dBurn > 0 ? "#ddaa00" : "#333355" }}>
+                        {row.estimated30dBurn > 0 ? fAlpha(row.estimated30dBurn) : "\u2014"}
+                      </td>
+
+                      {/* TAO Value */}
+                      <td style={{ ...S.td, color: row.taoValue30d > 0 ? "#9966ff" : "#333355" }}>
+                        {row.taoValue30d > 0 ? fTao(row.taoValue30d) : "\u2014"}
                       </td>
                     </tr>
 
@@ -685,34 +642,10 @@ export default function BurnScanner() {
                           <div style={{ display: "flex", gap: "32px", flexWrap: "wrap" }}>
                             <div>
                               <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
-                                EXPECTED EMISSION (30d)
+                                INCENTIVE BURN RATE
                               </div>
-                              <div style={{ color: "#8888cc" }}>
-                                {row.hasData ? fAlpha(row.expected30d) : "\u2014"}
-                              </div>
-                            </div>
-                            <div>
-                              <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
-                                ACTUAL CHANGE
-                              </div>
-                              <div style={{ color: row.actualChange < 0 ? "#ff4455" : "#8888cc" }}>
-                                {row.hasData ? (row.actualChange >= 0 ? "+" : "") + fAlpha(row.actualChange) : "\u2014"}
-                              </div>
-                            </div>
-                            <div>
-                              <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
-                                DERIVED BURN
-                              </div>
-                              <div style={{ color: "#ff6633" }}>
-                                {row.hasData ? fAlpha(row.derivedBurn) : "\u2014"}
-                              </div>
-                            </div>
-                            <div>
-                              <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
-                                DAILY BURN RATE
-                              </div>
-                              <div style={{ color: "#8888cc" }}>
-                                {row.hasData ? fAlpha(row.dailyRate) + "/day" : "\u2014"}
+                              <div style={{ color: row.incentiveBurn > 0 ? "#ff6633" : "#555577" }}>
+                                {fPct(row.incentiveBurn)}
                               </div>
                             </div>
                             <div>
@@ -720,7 +653,55 @@ export default function BurnScanner() {
                                 EMISSION/BLOCK
                               </div>
                               <div style={{ color: "#8888cc" }}>
-                                {row.emissionPerBlock > 0 ? row.emissionPerBlock.toFixed(6) + " \u03B1" : "\u2014"}
+                                {row.emissionPerBlock.toFixed(6)} {"\u03B1"}
+                              </div>
+                            </div>
+                            <div>
+                              <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
+                                BURN/BLOCK
+                              </div>
+                              <div style={{ color: "#ff6633" }}>
+                                {(row.emissionPerBlock * row.incentiveBurn).toFixed(6)} {"\u03B1"}
+                              </div>
+                            </div>
+                            <div>
+                              <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
+                                BURN/DAY
+                              </div>
+                              <div style={{ color: "#ff6633" }}>
+                                {fAlpha(row.burnPerDay)}
+                              </div>
+                            </div>
+                            <div>
+                              <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
+                                EST. 30d BURN
+                              </div>
+                              <div style={{ color: "#ddaa00" }}>
+                                {fAlpha(row.estimated30dBurn)}
+                              </div>
+                            </div>
+                            <div>
+                              <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
+                                EXPECTED EMISSION (30d)
+                              </div>
+                              <div style={{ color: "#8888cc" }}>
+                                {fAlpha(row.expected30d)}
+                              </div>
+                            </div>
+                            <div>
+                              <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
+                                RECYCLED LIFETIME
+                              </div>
+                              <div style={{ color: "#b0b0cc" }}>
+                                {fAlpha(row.recycledLifetime)}
+                              </div>
+                            </div>
+                            <div>
+                              <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
+                                RECYCLED 24H
+                              </div>
+                              <div style={{ color: row.recycled24h > 0 ? "#ff8833" : "#555577" }}>
+                                {fAlpha(row.recycled24h)}
                               </div>
                             </div>
                             <div>
@@ -733,18 +714,10 @@ export default function BurnScanner() {
                             </div>
                             <div>
                               <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
-                                DATA POINTS
+                                TAO VALUE (LIFETIME)
                               </div>
-                              <div style={{ color: "#8888cc" }}>
-                                {row.dataPoints || 0} snapshots over {Math.round(row.daysOfData || 0)}d
-                              </div>
-                            </div>
-                            <div>
-                              <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
-                                INCENTIVE BURN
-                              </div>
-                              <div style={{ color: row.incentiveBurn > 0 ? "#ff6633" : "#555577" }}>
-                                {fPct(row.incentiveBurn)}
+                              <div style={{ color: "#9966ff" }}>
+                                {row.taoValueLifetime > 0 ? fTao(row.taoValueLifetime) : "\u2014"}
                               </div>
                             </div>
                           </div>
