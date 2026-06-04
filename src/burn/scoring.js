@@ -15,9 +15,9 @@ export function classifyBurnStatus(incentiveBurn, recycledLifetime) {
   if (incentiveBurn >= HEAVY_BURN_PCT) return "heavy";
   if (incentiveBurn >= MODERATE_BURN_PCT) return "moderate";
   if (incentiveBurn >= LIGHT_BURN_PCT) return "light";
-  // If they have recycled alpha but low incentive burn, still light
+  // If they have recycled alpha but low/zero incentive burn
   if (recycledLifetime > 0 && incentiveBurn > 0) return "light";
-  if (recycledLifetime > 0) return "minimal";
+  if (incentiveBurn <= 0 && recycledLifetime <= 0) return "noburn";
   return "minimal";
 }
 
@@ -48,8 +48,8 @@ export function scoreBurns(subnets, pools, meta) {
     const emission = parseFloat(s.emission) || 0;
     const emissionPerBlock = emission / 1e9;
 
-    // Skip zero-emission subnets (root network etc.)
-    if (emissionPerBlock <= 0) continue;
+    // Skip root network (netuid 0) only
+    if (netuid === 0) continue;
 
     const pool = poolMap[netuid];
     const m = meta?.[String(netuid)] || null;
@@ -115,7 +115,7 @@ export function scoreBurns(subnets, pools, meta) {
  * Aggregate summary statistics from scored rows.
  */
 export function computeBurnSummary(scored) {
-  let heavy = 0, moderate = 0, light = 0, minimal = 0, nodata = 0;
+  let heavy = 0, moderate = 0, light = 0, minimal = 0, noburn = 0;
   let totalRecycledLifetime = 0, totalRecycledTaoValue = 0;
   let totalEst30dBurn = 0, totalEst30dTaoValue = 0;
   let incentiveSum = 0, incentiveCount = 0;
@@ -127,7 +127,8 @@ export function computeBurnSummary(scored) {
       case "moderate": moderate++; break;
       case "light": light++; break;
       case "minimal": minimal++; break;
-      default: nodata++; break;
+      case "noburn": noburn++; break;
+      default: noburn++; break;
     }
 
     totalRecycledLifetime += row.recycledLifetime;
@@ -147,7 +148,7 @@ export function computeBurnSummary(scored) {
     moderate,
     light,
     minimal,
-    nodata,
+    noburn,
     totalRecycledLifetime,
     totalRecycledTaoValue,
     totalEst30dBurn,

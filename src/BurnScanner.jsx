@@ -317,6 +317,7 @@ export default function BurnScanner() {
   else if (filter === "moderate") filtered = data.filter((d) => d.status === "moderate");
   else if (filter === "light") filtered = data.filter((d) => d.status === "light");
   else if (filter === "minimal") filtered = data.filter((d) => d.status === "minimal");
+  else if (filter === "noburn") filtered = data.filter((d) => d.status === "noburn");
 
   // Search
   if (search.trim()) {
@@ -340,7 +341,7 @@ export default function BurnScanner() {
       case "taoValue30d": av = a.taoValue30d; bv = b.taoValue30d; break;
       case "burnPerDay": av = a.burnPerDay; bv = b.burnPerDay; break;
       case "status": {
-        const order = { heavy: 4, moderate: 3, light: 2, minimal: 1, nodata: 0 };
+        const order = { heavy: 4, moderate: 3, light: 2, minimal: 1, noburn: 0 };
         av = order[a.status] ?? 0;
         bv = order[b.status] ?? 0;
         break;
@@ -404,6 +405,9 @@ export default function BurnScanner() {
           </button>
           <button onClick={() => setFilter("minimal")} style={S.btn(filter === "minimal")}>
             {"\u26AA"} Minimal ({summary?.minimal || 0})
+          </button>
+          <button onClick={() => setFilter("noburn")} style={S.btn(filter === "noburn")}>
+            {"\u2014"} No Burn ({summary?.noburn || 0})
           </button>
 
           {/* Search */}
@@ -566,7 +570,7 @@ export default function BurnScanner() {
             </thead>
             <tbody>
               {filtered.map((row, i) => {
-                const statusCfg = BURN_STATUS_CONFIG[row.status] || BURN_STATUS_CONFIG.minimal;
+                const statusCfg = BURN_STATUS_CONFIG[row.status] || BURN_STATUS_CONFIG.noburn;
                 const isExpanded = expanded[row.netuid];
 
                 return (

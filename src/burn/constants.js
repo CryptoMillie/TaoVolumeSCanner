@@ -49,8 +49,8 @@ export const BURN_STATUS_CONFIG = {
     border: "#1a1a2e",
     rowBg: "transparent",
   },
-  nodata: {
-    label: "\u2014 No Data",
+  noburn: {
+    label: "\u2014 No Burn",
     color: "#333355",
     bg: "#0a0a14",
     border: "#1a1a2e",
