@@ -346,6 +346,12 @@ export default function BurnScanner() {
         bv = order[b.status] ?? 0;
         break;
       }
+      case "manualSignal": {
+        const mOrder = { confirmed: 3, likely: 2, possible: 1, none: 0 };
+        av = mOrder[a.manualSignal] ?? 0;
+        bv = mOrder[b.manualSignal] ?? 0;
+        break;
+      }
       default: av = a.incentiveBurn; bv = b.incentiveBurn;
     }
     if (typeof av === "string") {
@@ -524,6 +530,21 @@ export default function BurnScanner() {
               </span>
             </div>
           </div>
+
+          <div style={S.card("#ff44ff")}>
+            <div style={S.cardLabel}>Manual Burners</div>
+            <div style={S.cardValue("#ff44ff")}>
+              <AnimCounter target={summary.manualConfirmed} />
+              {summary.manualLikely > 0 && (
+                <span style={{ fontSize: "10px", color: "#993399" }}>
+                  {" "}+{summary.manualLikely} likely
+                </span>
+              )}
+            </div>
+            <div style={{ color: "#662266", fontSize: "9px", marginTop: "2px" }}>
+              0% incentive but recycled {">"} 0
+            </div>
+          </div>
         </div>
       )}
 
@@ -564,6 +585,11 @@ export default function BurnScanner() {
                 <th style={S.th} onClick={() => handleSort("taoValue30d")}>
                   <Tooltip text={TOOLTIPS.taoValue}>
                     TAO Value{sortArrow("taoValue30d")}
+                  </Tooltip>
+                </th>
+                <th style={S.th} onClick={() => handleSort("manualSignal")}>
+                  <Tooltip text="Manual burn detection. CONFIRMED = 0% incentive burn but has recycled alpha (all burns are manual). LIKELY = recycled 24h exceeds what incentive burn alone would produce. Helps identify owners actively buying & burning alpha.">
+                    Manual{sortArrow("manualSignal")}
                   </Tooltip>
                 </th>
               </tr>
@@ -637,12 +663,55 @@ export default function BurnScanner() {
                       <td style={{ ...S.td, color: row.taoValue30d > 0 ? "#9966ff" : "#333355" }}>
                         {row.taoValue30d > 0 ? fTao(row.taoValue30d) : "\u2014"}
                       </td>
+
+                      {/* Manual Burn Signal */}
+                      <td style={S.td}>
+                        {row.manualSignal === "confirmed" ? (
+                          <span style={{
+                            display: "inline-block",
+                            padding: "2px 8px",
+                            borderRadius: "3px",
+                            fontSize: "10px",
+                            fontWeight: 600,
+                            color: "#ff44ff",
+                            background: "#1a0a1a",
+                            border: "1px solid #3a1a3a",
+                          }}
+                            title={`All ${fAlpha(row.recycledLifetime)} recycled is from manual burns (0% incentive burn set)`}
+                          >
+                            CONFIRMED
+                          </span>
+                        ) : row.manualSignal === "likely" ? (
+                          <span style={{
+                            display: "inline-block",
+                            padding: "2px 8px",
+                            borderRadius: "3px",
+                            fontSize: "10px",
+                            fontWeight: 600,
+                            color: "#cc66cc",
+                            background: "#140a14",
+                            border: "1px solid #2a1a2a",
+                          }}
+                            title={`Excess 24h burn: ${fAlpha(row.excess24h)} beyond what incentive rate explains`}
+                          >
+                            LIKELY
+                          </span>
+                        ) : row.manualSignal === "possible" ? (
+                          <span style={{ color: "#665566", fontSize: "10px" }}
+                            title={`Small excess in 24h recycled: ${fAlpha(row.excess24h)}`}
+                          >
+                            possible
+                          </span>
+                        ) : (
+                          <span style={{ color: "#333355" }}>{"\u2014"}</span>
+                        )}
+                      </td>
                     </tr>
 
                     {/* Expanded detail row */}
                     {isExpanded && (
                       <tr>
-                        <td colSpan={7} style={S.expandedRow}>
+                        <td colSpan={8} style={S.expandedRow}>
                           <div style={{ display: "flex", gap: "32px", flexWrap: "wrap" }}>
                             <div>
                               <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
@@ -724,7 +793,35 @@ export default function BurnScanner() {
                                 {row.taoValueLifetime > 0 ? fTao(row.taoValueLifetime) : "\u2014"}
                               </div>
                             </div>
+                            <div>
+                              <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
+                                MANUAL BURN SIGNAL
+                              </div>
+                              <div style={{ color: row.manualSignal === "confirmed" ? "#ff44ff" : row.manualSignal === "likely" ? "#cc66cc" : "#555577" }}>
+                                {row.manualSignal === "confirmed"
+                                  ? `CONFIRMED \u2014 ${fAlpha(row.manualAmountLifetime)} all-time manual`
+                                  : row.manualSignal === "likely"
+                                    ? `LIKELY \u2014 ${fAlpha(row.excess24h)} excess 24h`
+                                    : row.manualSignal === "possible"
+                                      ? `Possible \u2014 ${fAlpha(row.excess24h)} excess 24h`
+                                      : "No manual burn detected"
+                                }
+                              </div>
+                            </div>
                           </div>
+                          {row.manualSignal === "confirmed" && (
+                            <div style={{
+                              marginTop: "8px",
+                              padding: "6px 10px",
+                              background: "#1a0a1a",
+                              border: "1px solid #3a1a3a",
+                              borderRadius: "3px",
+                              color: "#cc66cc",
+                              fontSize: "9px",
+                            }}>
+                              This subnet has 0% incentive burn rate but {fAlpha(row.recycledLifetime)} alpha recycled all-time. All burns are manual \u2014 the owner is actively buying and burning alpha.
+                            </div>
+                          )}
                         </td>
                       </tr>
                     )}

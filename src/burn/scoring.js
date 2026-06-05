@@ -22,13 +22,54 @@ export function classifyBurnStatus(incentiveBurn, recycledLifetime) {
 }
 
 /**
- * Full scoring: compute burn metrics from subnet latest data + pool data.
- * No pool history needed — uses incentive_burn, recycled_lifetime, recycled_24h.
+ * Detect manual burn signal.
  *
- * @param {Array|object} subnets — subnet latest data
- * @param {Array|object} pools — pool latest data
- * @param {object} meta — subnet metadata
- * @returns {Array} scored rows
+ * Manual burn = recycled alpha that can't be explained by incentive_burn alone.
+ *
+ * Three signals:
+ * 1. incentive_burn = 0 but recycled > 0  → ALL recycled is manual (strongest signal)
+ * 2. recycled_24h > expected daily from incentive → excess is manual
+ * 3. recycled_lifetime >> what incentive_burn could have produced → likely manual history
+ */
+function detectManualBurn(row) {
+  const { incentiveBurn, recycledLifetime, recycled24h, burnPerDay, emissionPerBlock } = row;
+
+  // Case 1: Zero incentive burn rate but alpha has been recycled → 100% manual
+  if (incentiveBurn <= 0 && recycledLifetime > 0) {
+    return {
+      manualSignal: "confirmed",
+      manualAmount24h: recycled24h,
+      manualAmountLifetime: recycledLifetime,
+      excess24h: recycled24h,
+    };
+  }
+
+  // Case 2: Compare actual 24h recycled vs expected from incentive rate
+  // Expected daily from incentive = emission_per_block * blocks_per_day * incentive_burn
+  const expectedDaily = burnPerDay; // already = emissionPerBlock * BLOCKS_PER_DAY * incentiveBurn
+  const excess24h = recycled24h > 0 ? Math.max(0, recycled24h - expectedDaily) : 0;
+
+  if (excess24h > 0 && recycled24h > 0) {
+    // Recycled 24h significantly exceeds what incentive burn explains
+    const excessRatio = expectedDaily > 0 ? excess24h / expectedDaily : Infinity;
+    return {
+      manualSignal: excessRatio >= 0.5 ? "likely" : "possible",
+      manualAmount24h: excess24h,
+      manualAmountLifetime: 0, // can't separate lifetime
+      excess24h,
+    };
+  }
+
+  return {
+    manualSignal: "none",
+    manualAmount24h: 0,
+    manualAmountLifetime: 0,
+    excess24h: 0,
+  };
+}
+
+/**
+ * Full scoring: compute burn metrics from subnet latest data + pool data.
  */
 export function scoreBurns(subnets, pools, meta) {
   const subnetArr = Array.isArray(subnets) ? subnets : (subnets?.data || []);
@@ -89,7 +130,7 @@ export function scoreBurns(subnets, pools, meta) {
     // Status classification based on incentive_burn rate
     const status = classifyBurnStatus(incentiveBurn, recycledLifetime);
 
-    rows.push({
+    const row = {
       netuid,
       name,
       incentiveBurn,
@@ -105,7 +146,16 @@ export function scoreBurns(subnets, pools, meta) {
       emissionPerBlock,
       emission,
       hasData: true,
-    });
+    };
+
+    // Detect manual burn signal
+    const manual = detectManualBurn(row);
+    row.manualSignal = manual.manualSignal;
+    row.manualAmount24h = manual.manualAmount24h;
+    row.manualAmountLifetime = manual.manualAmountLifetime;
+    row.excess24h = manual.excess24h;
+
+    rows.push(row);
   }
 
   return rows;
@@ -120,6 +170,7 @@ export function computeBurnSummary(scored) {
   let totalEst30dBurn = 0, totalEst30dTaoValue = 0;
   let incentiveSum = 0, incentiveCount = 0;
   let withBurn = 0;
+  let manualConfirmed = 0, manualLikely = 0;
 
   for (const row of scored) {
     switch (row.status) {
@@ -141,6 +192,9 @@ export function computeBurnSummary(scored) {
       incentiveCount++;
       withBurn++;
     }
+
+    if (row.manualSignal === "confirmed") manualConfirmed++;
+    else if (row.manualSignal === "likely") manualLikely++;
   }
 
   return {
@@ -155,6 +209,8 @@ export function computeBurnSummary(scored) {
     totalEst30dTaoValue,
     avgIncentiveBurn: incentiveCount > 0 ? incentiveSum / incentiveCount : 0,
     withBurn,
+    manualConfirmed,
+    manualLikely,
     total: scored.length,
   };
 }
