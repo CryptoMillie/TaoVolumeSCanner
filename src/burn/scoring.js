@@ -25,47 +25,45 @@ export function classifyBurnStatus(incentiveBurn, recycledLifetime) {
  * Detect manual burn signal.
  *
  * Manual burn = recycled alpha that can't be explained by incentive_burn alone.
+ * Only uses recycled_24h (active burning) — recycled_lifetime includes registration
+ * burns and protocol-level recycling which aren't manual owner burns.
  *
- * Three signals:
- * 1. incentive_burn = 0 but recycled > 0  → ALL recycled is manual (strongest signal)
- * 2. recycled_24h > expected daily from incentive → excess is manual
- * 3. recycled_lifetime >> what incentive_burn could have produced → likely manual history
+ * CONFIRMED: 0% incentive burn AND actively burning in last 24h
+ * LIKELY: recycled_24h exceeds expected daily from incentive by 2x+
  */
 function detectManualBurn(row) {
-  const { incentiveBurn, recycledLifetime, recycled24h, burnPerDay, emissionPerBlock } = row;
+  const { incentiveBurn, recycled24h, burnPerDay } = row;
 
-  // Case 1: Zero incentive burn rate but alpha has been recycled → 100% manual
-  if (incentiveBurn <= 0 && recycledLifetime > 0) {
+  // Must have meaningful 24h burn activity to qualify (>= 0.1 alpha, filters out dust)
+  if (recycled24h < 0.1) {
+    return { manualSignal: "none", manualAmount24h: 0, manualAmountLifetime: 0, excess24h: 0 };
+  }
+
+  // Case 1: Zero incentive burn rate but actively burning in 24h → confirmed manual
+  if (incentiveBurn <= 0 && recycled24h >= 0.1) {
     return {
       manualSignal: "confirmed",
       manualAmount24h: recycled24h,
-      manualAmountLifetime: recycledLifetime,
+      manualAmountLifetime: 0,
       excess24h: recycled24h,
     };
   }
 
-  // Case 2: Compare actual 24h recycled vs expected from incentive rate
-  // Expected daily from incentive = emission_per_block * blocks_per_day * incentive_burn
-  const expectedDaily = burnPerDay; // already = emissionPerBlock * BLOCKS_PER_DAY * incentiveBurn
-  const excess24h = recycled24h > 0 ? Math.max(0, recycled24h - expectedDaily) : 0;
+  // Case 2: Has incentive burn — compare actual 24h recycled vs expected from rate
+  const expectedDaily = burnPerDay;
+  const excess24h = Math.max(0, recycled24h - expectedDaily);
 
-  if (excess24h > 0 && recycled24h > 0) {
-    // Recycled 24h significantly exceeds what incentive burn explains
-    const excessRatio = expectedDaily > 0 ? excess24h / expectedDaily : Infinity;
+  // Only flag if excess is at least 2x the expected daily (significant manual activity)
+  if (expectedDaily > 0 && excess24h > expectedDaily * 2) {
     return {
-      manualSignal: excessRatio >= 0.5 ? "likely" : "possible",
+      manualSignal: "likely",
       manualAmount24h: excess24h,
-      manualAmountLifetime: 0, // can't separate lifetime
+      manualAmountLifetime: 0,
       excess24h,
     };
   }
 
-  return {
-    manualSignal: "none",
-    manualAmount24h: 0,
-    manualAmountLifetime: 0,
-    excess24h: 0,
-  };
+  return { manualSignal: "none", manualAmount24h: 0, manualAmountLifetime: 0, excess24h: 0 };
 }
 
 /**
