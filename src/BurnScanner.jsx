@@ -617,6 +617,41 @@ export default function BurnScanner() {
                         <span style={{ color: "#6666aa", marginLeft: "8px" }}>
                           {row.name || "\u2014"}
                         </span>
+                        {row.manualSignal === "confirmed" && (
+                          <span
+                            style={{
+                              marginLeft: "6px",
+                              padding: "1px 6px",
+                              borderRadius: "3px",
+                              fontSize: "9px",
+                              fontWeight: 700,
+                              color: "#ff44ff",
+                              background: "#1a0a1a",
+                              border: "1px solid #3a1a3a",
+                              letterSpacing: "0.04em",
+                            }}
+                            title="Manual burner — 0% incentive burn but has recycled alpha. Owner is buying & burning."
+                          >
+                            {"\uD83D\uDD25"} MANUAL
+                          </span>
+                        )}
+                        {row.manualSignal === "likely" && (
+                          <span
+                            style={{
+                              marginLeft: "6px",
+                              padding: "1px 6px",
+                              borderRadius: "3px",
+                              fontSize: "9px",
+                              fontWeight: 600,
+                              color: "#cc66cc",
+                              background: "#140a14",
+                              border: "1px solid #2a1a2a",
+                            }}
+                            title={`Likely manual burns — recycled 24h exceeds incentive rate by ${fAlpha(row.excess24h)}`}
+                          >
+                            {"\uD83D\uDD25"} LIKELY
+                          </span>
+                        )}
                       </td>
 
                       {/* Status */}
