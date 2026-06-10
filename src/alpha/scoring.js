@@ -24,8 +24,19 @@ function percentileRank(value, allValues) {
  *   MARKET:    market_cap + inverse market_cap_rank (lower rank = better)
  *   ONCHAIN:   ATH proximity + 24h price range utilization
  */
-export function scoreAlphaSignals(coins) {
+export function scoreAlphaSignals(coins, pools, meta) {
   if (!coins || !Array.isArray(coins) || coins.length === 0) return [];
+
+  // Build symbol → pool lookup from TaoStats pool data (same as other tabs)
+  const poolBySymbol = {};
+  const poolArr = Array.isArray(pools) ? pools : (pools?.data || []);
+  poolArr.forEach((p) => {
+    const sym = (p.symbol || p.token_symbol || "").toLowerCase();
+    if (sym) poolBySymbol[sym] = p;
+  });
+
+  // Build netuid → meta lookup
+  const metaMap = meta || {};
 
   const items = coins.map(c => {
     const volume = num(c.total_volume);
@@ -52,10 +63,25 @@ export function scoreAlphaSignals(coins) {
     // Inverse rank score (lower rank = higher score)
     const rankScore = mcRank > 0 ? Math.max(0, 1000 - mcRank) : 0;
 
+    // Resolve subnet name using same priority as other tabs:
+    // pool.name → meta.name → CoinGecko name → fallback
+    const sym = (c.symbol || "").toLowerCase();
+    const pool = poolBySymbol[sym] || null;
+    const netuid = pool ? (pool.netuid ?? pool.subnet_id) : null;
+    const m = netuid != null ? metaMap[String(netuid)] : null;
+    const resolvedName =
+      pool?.name && pool.name !== "Unknown"
+        ? pool.name
+        : m?.name
+          ? m.name
+          : c.name
+            ? c.name
+            : "Unknown";
+
     return {
       raw: c,
       symbol: c.symbol || "???",
-      name: c.name || "Unknown",
+      name: resolvedName,
       metrics: {
         momentum_1: Math.abs(priceChange24h), // absolute momentum (direction-agnostic strength)
         momentum_2: Math.abs(priceChange7d),

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useSharedData } from "./DataContext.jsx";
 import { fetchAllAlphaData } from "./alpha/api.js";
 import { scoreAlphaSignals } from "./alpha/scoring.js";
 import { ALPHA_TIER_CONFIG, ALPHA_DIMENSION_LABELS, SENTIMENT_COLORS } from "./alpha/constants.js";
@@ -159,6 +160,7 @@ function ErrorList({ errors }) {
 }
 
 export default function AlphaScanner() {
+  const { refreshTaoStats } = useSharedData();
   const [loading, setLoading] = useState(false);
   const [ts, setTs] = useState(null);
   const [errors, setErrors] = useState([]);
@@ -181,7 +183,11 @@ export default function AlphaScanner() {
     setLoading(true);
     setErrors([]);
     try {
-      const data = await fetchAllAlphaData();
+      // Fetch CoinGecko + Desearch and TaoStats (for subnet names) in parallel
+      const [data, tsData] = await Promise.all([
+        fetchAllAlphaData(),
+        refreshTaoStats().catch(() => ({ pools: [], meta: {} })),
+      ]);
       setErrors(data.errors);
 
       // ─── Desearch AI results (structured) ───
@@ -199,10 +205,10 @@ export default function AlphaScanner() {
         setDsXTweets(Array.isArray(tweets) ? tweets.slice(0, 15) : []);
       }
 
-      // ─── CoinGecko Bittensor coins ───
+      // ─── CoinGecko Bittensor coins (with TaoStats name resolution) ───
       const btCoins = data.bittensorCoins;
       if (Array.isArray(btCoins) && btCoins.length > 0) {
-        setAlphaScores(scoreAlphaSignals(btCoins));
+        setAlphaScores(scoreAlphaSignals(btCoins, tsData.pools, tsData.meta));
       }
 
       // ─── CoinGecko meme coins ───
@@ -220,7 +226,7 @@ export default function AlphaScanner() {
       setErrors([{ source: "general", error: e.message }]);
     }
     setLoading(false);
-  }, []);
+  }, [refreshTaoStats]);
 
   useEffect(() => { scan(); }, []);
 
