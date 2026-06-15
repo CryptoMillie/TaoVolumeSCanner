@@ -242,7 +242,6 @@ export default function WhaleScanner() {
       ]);
       const subnetArr = Array.isArray(subnets) ? subnets : (subnets?.data || []);
       const netuids = subnetArr
-        .filter(s => parseFloat(s.emission) > 0)
         .map(s => s.netuid ?? s.subnet_id)
         .filter(id => id != null);
       const coldkeyMap = await fetchColdkeyDistributionMap(netuids);

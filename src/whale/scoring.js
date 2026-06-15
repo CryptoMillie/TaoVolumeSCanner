@@ -110,7 +110,7 @@ export function scoreWhales(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}) {
     if (id != null) poolMap[id] = p;
   });
 
-  const activeSubnets = subnets.filter(s => num(s.emission) > 0);
+  const activeSubnets = subnets;
   if (activeSubnets.length === 0) return [];
 
   // Build raw items for all active subnets (include those without coldkey data)
