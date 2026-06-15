@@ -285,6 +285,10 @@ export default function WhaleScanner() {
   );
 
   const sorted = [...filtered].sort((a, b) => {
+    // Subnets without coldkey data always sort to the bottom
+    if (a.hasColdkeyData && !b.hasColdkeyData) return -1;
+    if (!a.hasColdkeyData && b.hasColdkeyData) return 1;
+
     let av, bv;
     switch (sortKey) {
       case "whaleScore": av = a.whaleScore; bv = b.whaleScore; break;
@@ -299,13 +303,16 @@ export default function WhaleScanner() {
     return sortDir === "desc" ? bv - av : av - bv;
   });
 
+  const withData = scored.filter(s => s.hasColdkeyData);
   const counts = {
     total: scored.length,
-    distributed: scored.filter(s => s.tier === "distributed").length,
-    moderate: scored.filter(s => s.tier === "moderate").length,
-    concentrated: scored.filter(s => s.tier === "concentrated").length,
-    whaleDominated: scored.filter(s => s.tier === "whale-dominated").length,
-    flagged: scored.filter(s => s.flags.length > 0).length,
+    analyzed: withData.length,
+    distributed: withData.filter(s => s.tier === "distributed").length,
+    moderate: withData.filter(s => s.tier === "moderate").length,
+    concentrated: withData.filter(s => s.tier === "concentrated").length,
+    whaleDominated: withData.filter(s => s.tier === "whale-dominated").length,
+    flagged: withData.filter(s => s.flags.length > 0).length,
+    noData: scored.length - withData.length,
   };
 
   const TC = WHALE_TIER_CONFIG;
@@ -386,7 +393,7 @@ export default function WhaleScanner() {
       {scored.length > 0 && (
         <div style={{ overflowX: "auto" }}>
           <div style={S.statsBar}>
-            <span>{counts.total} subnets analyzed</span>
+            <span>{counts.analyzed} of {counts.total} subnets with coldkey data</span>
             {counts.distributed > 0 && <span style={{ color: TC.distributed.color }}>{counts.distributed} distributed</span>}
             {counts.moderate > 0 && <span style={{ color: TC.moderate.color }}>{counts.moderate} moderate</span>}
             {counts.concentrated > 0 && <span style={{ color: TC.concentrated.color }}>{counts.concentrated} concentrated</span>}
@@ -430,11 +437,11 @@ export default function WhaleScanner() {
                       <td style={{ ...S.cellLeft, color: "#282844" }}>{i + 1}</td>
                       <td style={S.cellLeft}>
                         <SubnetLogo url={s.logo} name={s.name} />
-                        <span style={{ color: tierCfg.color, fontWeight: s.tier === "distributed" ? 600 : 400 }}>{s.name}</span>
+                        <span style={{ color: s.hasColdkeyData ? tierCfg.color : "#333355", fontWeight: s.hasColdkeyData && s.tier === "distributed" ? 600 : 400 }}>{s.name}</span>
                         <span style={{ color: "#1e1e30", fontSize: "10px", marginLeft: "7px" }}>SN{s.netuid}</span>
                       </td>
-                      <td style={S.cell}><ScoreBadge score={s.whaleScore} tier={s.tier} /></td>
-                      <td style={S.cell}><TierLabel tier={s.tier} /></td>
+                      <td style={S.cell}>{s.hasColdkeyData ? <ScoreBadge score={s.whaleScore} tier={s.tier} /> : <span style={{ color: "#1e1e33", fontSize: "10px" }}>{"\u2014"}</span>}</td>
+                      <td style={S.cell}>{s.hasColdkeyData ? <TierLabel tier={s.tier} /> : <span style={{ color: "#1e1e33", fontSize: "9px", letterSpacing: "0.06em" }}>NO DATA</span>}</td>
                       <td style={{ ...S.cell, color: !s.hasColdkeyData ? "#1e1e33" : s.top1Pct > 50 ? "#ff4455" : s.top1Pct > 30 ? "#ddaa00" : "#555577" }}>{s.hasColdkeyData ? s.top1Pct.toFixed(1) : "N/A"}</td>
                       <td style={{ ...S.cell, color: !s.hasColdkeyData ? "#1e1e33" : s.top5Pct > 80 ? "#ff4455" : s.top5Pct > 60 ? "#ddaa00" : "#555577" }}>{s.hasColdkeyData ? s.top5Pct.toFixed(1) : "N/A"}</td>
                       <td style={{ ...S.cell, color: !s.hasColdkeyData ? "#1e1e33" : "#555577" }}>{s.hasColdkeyData ? s.top10Pct.toFixed(1) : "N/A"}</td>
