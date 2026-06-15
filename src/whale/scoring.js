@@ -113,48 +113,62 @@ export function scoreWhales(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}) {
   const activeSubnets = subnets.filter(s => num(s.emission) > 0);
   if (activeSubnets.length === 0) return [];
 
-  // Build raw items for each subnet that has coldkey data
+  // Build raw items for all active subnets (include those without coldkey data)
   const items = [];
 
   for (const s of activeSubnets) {
     const netuid = s.netuid ?? s.subnet_id;
     const ckData = coldkeyMap[netuid];
-    if (!ckData || !ckData.entries || ckData.entries.length === 0 || ckData.totalCount <= 0) continue;
+    const hasColdkeyData = ckData && ckData.entries && ckData.entries.length > 0 && ckData.totalCount > 0;
 
     const pool = poolMap[netuid] || null;
     const poolTao = pool ? toTao(pool.total_tao) : 0;
     const marketCap = pool ? num(pool.market_cap) : 0;
     const alphaInPool = pool ? toTao(pool.alpha_in_pool || pool.alpha_reserve || 0) : 0;
 
-    // Sort entries by count descending to identify top holders
-    const sortedEntries = [...ckData.entries].sort((a, b) => (b.count || 0) - (a.count || 0));
-    const totalCount = ckData.totalCount;
+    let sortedEntries = [];
+    let totalCount = 0;
+    let uniqueColdkeys = 0;
+    let top1Share = 0;
+    let top5Share = 0;
+    let top10Share = 0;
+    let hhi = 0;
+    let impactPct = 0;
 
-    // Calculate top holder shares
-    const top1Share = topNShare(sortedEntries, 1, totalCount);
-    const top5Share = topNShare(sortedEntries, 5, totalCount);
-    const top10Share = topNShare(sortedEntries, 10, totalCount);
+    if (hasColdkeyData) {
+      // Sort entries by count descending to identify top holders
+      sortedEntries = [...ckData.entries].sort((a, b) => (b.count || 0) - (a.count || 0));
+      totalCount = ckData.totalCount;
+      uniqueColdkeys = ckData.uniqueColdkeys;
 
-    // Calculate HHI
-    const hhi = calculateHHI(sortedEntries, totalCount);
+      // Calculate top holder shares
+      top1Share = topNShare(sortedEntries, 1, totalCount);
+      top5Share = topNShare(sortedEntries, 5, totalCount);
+      top10Share = topNShare(sortedEntries, 10, totalCount);
 
-    // Estimate price impact if top whale dumps
-    const impactFraction = estimatePriceImpact(top1Share);
-    const impactPct = impactFraction * 100;
+      // Calculate HHI
+      hhi = calculateHHI(sortedEntries, totalCount);
 
-    // Generate red flags
+      // Estimate price impact if top whale dumps
+      const impactFraction = estimatePriceImpact(top1Share);
+      impactPct = impactFraction * 100;
+    }
+
+    // Generate red flags (only if we have coldkey data)
     const flags = [];
-    if (top1Share > RED_FLAG_THRESHOLDS.SINGLE_WHALE) {
-      flags.push({ id: "SINGLE_WHALE", label: "SINGLE WHALE", desc: `Top holder controls ${(top1Share * 100).toFixed(1)}% of registrations` });
-    }
-    if (top5Share > RED_FLAG_THRESHOLDS.TOP_HEAVY) {
-      flags.push({ id: "TOP_HEAVY", label: "TOP HEAVY", desc: `Top 5 holders control ${(top5Share * 100).toFixed(1)}% of registrations` });
-    }
-    if ((top1Share > 0.30 || hhi > 1500) && poolTao < RED_FLAG_THRESHOLDS.THIN_LIQUIDITY_TAO) {
-      flags.push({ id: "THIN_LIQUIDITY", label: "THIN LIQUIDITY", desc: `High concentration with only ${poolTao.toFixed(0)} TAO in pool` });
-    }
-    if (hhi > RED_FLAG_THRESHOLDS.HHI_CONCENTRATED) {
-      flags.push({ id: "CONCENTRATION_RISK", label: "HHI RISK", desc: `HHI of ${Math.round(hhi)} exceeds DOJ antitrust threshold (2500)` });
+    if (hasColdkeyData) {
+      if (top1Share > RED_FLAG_THRESHOLDS.SINGLE_WHALE) {
+        flags.push({ id: "SINGLE_WHALE", label: "SINGLE WHALE", desc: `Top holder controls ${(top1Share * 100).toFixed(1)}% of registrations` });
+      }
+      if (top5Share > RED_FLAG_THRESHOLDS.TOP_HEAVY) {
+        flags.push({ id: "TOP_HEAVY", label: "TOP HEAVY", desc: `Top 5 holders control ${(top5Share * 100).toFixed(1)}% of registrations` });
+      }
+      if ((top1Share > 0.30 || hhi > 1500) && poolTao < RED_FLAG_THRESHOLDS.THIN_LIQUIDITY_TAO) {
+        flags.push({ id: "THIN_LIQUIDITY", label: "THIN LIQUIDITY", desc: `High concentration with only ${poolTao.toFixed(0)} TAO in pool` });
+      }
+      if (hhi > RED_FLAG_THRESHOLDS.HHI_CONCENTRATED) {
+        flags.push({ id: "CONCENTRATION_RISK", label: "HHI RISK", desc: `HHI of ${Math.round(hhi)} exceeds DOJ antitrust threshold (2500)` });
+      }
     }
 
     items.push({
@@ -166,7 +180,8 @@ export function scoreWhales(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}) {
       alphaInPool,
       sortedEntries,
       totalCount,
-      uniqueColdkeys: ckData.uniqueColdkeys,
+      uniqueColdkeys,
+      hasColdkeyData,
       top1Share,
       top5Share,
       top10Share,
@@ -179,81 +194,96 @@ export function scoreWhales(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}) {
 
   if (items.length === 0) return [];
 
-  // Collect arrays for percentile ranking (inverted: higher concentration = worse = lower score)
-  const top1Values = items.map(it => it.top1Share);
-  const top5Values = items.map(it => it.top5Share);
-  const hhiValues = items.map(it => it.hhi);
-  const impactValues = items.map(it => it.impactPct);
+  // Collect arrays for percentile ranking from subnets WITH coldkey data only
+  const withData = items.filter(it => it.hasColdkeyData);
+  const top1Values = withData.map(it => it.top1Share);
+  const top5Values = withData.map(it => it.top5Share);
+  const hhiValues = withData.map(it => it.hhi);
+  const impactValues = withData.map(it => it.impactPct);
 
   const scored = items.map(it => {
-    // INVERTED percentile: lower concentration = higher score = safer
-    const top1Score = 100 - percentileRank(it.top1Share, top1Values);
-    const top5Score = 100 - percentileRank(it.top5Share, top5Values);
-    const hhiScore = 100 - percentileRank(it.hhi, hhiValues);
-    const impactScore = 100 - percentileRank(it.impactPct, impactValues);
+    let composite;
+    let tier;
 
-    // Composite whale score (0-100, higher = safer/more distributed)
-    const composite =
-      top1Score * WHALE_SIGNAL_WEIGHTS.TOP1 +
-      top5Score * WHALE_SIGNAL_WEIGHTS.TOP5 +
-      hhiScore * WHALE_SIGNAL_WEIGHTS.HHI +
-      impactScore * WHALE_SIGNAL_WEIGHTS.IMPACT;
+    if (it.hasColdkeyData) {
+      // INVERTED percentile: lower concentration = higher score = safer
+      const top1Score = 100 - percentileRank(it.top1Share, top1Values);
+      const top5Score = 100 - percentileRank(it.top5Share, top5Values);
+      const hhiScore = 100 - percentileRank(it.hhi, hhiValues);
+      const impactScore = 100 - percentileRank(it.impactPct, impactValues);
+
+      // Composite whale score (0-100, higher = safer/more distributed)
+      composite =
+        top1Score * WHALE_SIGNAL_WEIGHTS.TOP1 +
+        top5Score * WHALE_SIGNAL_WEIGHTS.TOP5 +
+        hhiScore * WHALE_SIGNAL_WEIGHTS.HHI +
+        impactScore * WHALE_SIGNAL_WEIGHTS.IMPACT;
+    } else {
+      // No coldkey data — assign neutral score of 50
+      composite = 50;
+    }
 
     // Assign tier
-    const tier = composite >= WHALE_TIERS.DISTRIBUTED ? "distributed"
-               : composite >= WHALE_TIERS.MODERATE ? "moderate"
-               : composite >= WHALE_TIERS.CONCENTRATED ? "concentrated"
-               : "whale-dominated";
+    tier = composite >= WHALE_TIERS.DISTRIBUTED ? "distributed"
+         : composite >= WHALE_TIERS.MODERATE ? "moderate"
+         : composite >= WHALE_TIERS.CONCENTRATED ? "concentrated"
+         : "whale-dominated";
 
     // Build plain-English explanation
     const explanation = [];
 
-    if (it.top1Share > 0.50) {
-      explanation.push(`Single whale dominance: Top holder controls ${(it.top1Share * 100).toFixed(1)}% of all registrations. Extreme concentration risk.`);
-    } else if (it.top1Share > 0.30) {
-      explanation.push(`Significant whale presence: Top holder controls ${(it.top1Share * 100).toFixed(1)}% of registrations.`);
-    } else if (it.top1Share > 0.15) {
-      explanation.push(`Moderate top holder share at ${(it.top1Share * 100).toFixed(1)}%.`);
-    }
+    if (!it.hasColdkeyData) {
+      explanation.push("Coldkey distribution data unavailable for this subnet. Score is neutral (50). Expand for pool metrics.");
+    } else {
+      if (it.top1Share > 0.50) {
+        explanation.push(`Single whale dominance: Top holder controls ${(it.top1Share * 100).toFixed(1)}% of all registrations. Extreme concentration risk.`);
+      } else if (it.top1Share > 0.30) {
+        explanation.push(`Significant whale presence: Top holder controls ${(it.top1Share * 100).toFixed(1)}% of registrations.`);
+      } else if (it.top1Share > 0.15) {
+        explanation.push(`Moderate top holder share at ${(it.top1Share * 100).toFixed(1)}%.`);
+      }
 
-    if (it.top5Share > 0.80) {
-      explanation.push(`Top-heavy distribution: Top 5 holders control ${(it.top5Share * 100).toFixed(1)}% of registrations. Very few participants hold significant stake.`);
-    } else if (it.top5Share > 0.60) {
-      explanation.push(`Top 5 holders control ${(it.top5Share * 100).toFixed(1)}% — above-average concentration.`);
-    }
+      if (it.top5Share > 0.80) {
+        explanation.push(`Top-heavy distribution: Top 5 holders control ${(it.top5Share * 100).toFixed(1)}% of registrations. Very few participants hold significant stake.`);
+      } else if (it.top5Share > 0.60) {
+        explanation.push(`Top 5 holders control ${(it.top5Share * 100).toFixed(1)}% — above-average concentration.`);
+      }
 
-    if (it.hhi > 2500) {
-      explanation.push(`HHI of ${Math.round(it.hhi)} indicates highly concentrated ownership (above DOJ antitrust threshold of 2500).`);
-    } else if (it.hhi > 1500) {
-      explanation.push(`HHI of ${Math.round(it.hhi)} indicates moderately concentrated ownership.`);
-    }
+      if (it.hhi > 2500) {
+        explanation.push(`HHI of ${Math.round(it.hhi)} indicates highly concentrated ownership (above DOJ antitrust threshold of 2500).`);
+      } else if (it.hhi > 1500) {
+        explanation.push(`HHI of ${Math.round(it.hhi)} indicates moderately concentrated ownership.`);
+      }
 
-    if (it.impactPct > 30) {
-      explanation.push(`CRITICAL: If the top whale exits, estimated price impact is ${it.impactPct.toFixed(1)}% — would likely cause a severe crash.`);
-    } else if (it.impactPct > 15) {
-      explanation.push(`High price impact risk: Top whale exit could cause a ${it.impactPct.toFixed(1)}% price drop.`);
-    } else if (it.impactPct > 5) {
-      explanation.push(`Moderate price impact: Top whale exit estimated at ${it.impactPct.toFixed(1)}% price movement.`);
-    }
+      if (it.impactPct > 30) {
+        explanation.push(`CRITICAL: If the top whale exits, estimated price impact is ${it.impactPct.toFixed(1)}% — would likely cause a severe crash.`);
+      } else if (it.impactPct > 15) {
+        explanation.push(`High price impact risk: Top whale exit could cause a ${it.impactPct.toFixed(1)}% price drop.`);
+      } else if (it.impactPct > 5) {
+        explanation.push(`Moderate price impact: Top whale exit estimated at ${it.impactPct.toFixed(1)}% price movement.`);
+      }
 
-    if (it.flags.some(f => f.id === "THIN_LIQUIDITY")) {
-      explanation.push(`Low pool liquidity (${it.poolTao.toFixed(0)} TAO) amplifies whale exit risk.`);
-    }
+      if (it.flags.some(f => f.id === "THIN_LIQUIDITY")) {
+        explanation.push(`Low pool liquidity (${it.poolTao.toFixed(0)} TAO) amplifies whale exit risk.`);
+      }
 
-    if (explanation.length === 0) {
-      if (tier === "distributed") {
-        explanation.push("Holder distribution is healthy. No single entity dominates, HHI is low, and estimated whale exit impact is minimal.");
-      } else {
-        explanation.push("Some concentration present but no individual metric strongly triggered. Score reflects moderate risk across dimensions.");
+      if (explanation.length === 0) {
+        if (tier === "distributed") {
+          explanation.push("Holder distribution is healthy. No single entity dominates, HHI is low, and estimated whale exit impact is minimal.");
+        } else {
+          explanation.push("Some concentration present but no individual metric strongly triggered. Score reflects moderate risk across dimensions.");
+        }
       }
     }
 
     // Top 5 holders breakdown for expanded view
-    const topHolders = it.sortedEntries.slice(0, 5).map(e => ({
-      coldkey: e.coldkey || e.address || "unknown",
-      count: e.count || 0,
-      share: it.totalCount > 0 ? (e.count || 0) / it.totalCount : 0,
-    }));
+    const topHolders = it.hasColdkeyData
+      ? it.sortedEntries.slice(0, 5).map(e => ({
+          coldkey: e.coldkey || e.address || "unknown",
+          count: e.count || 0,
+          share: it.totalCount > 0 ? (e.count || 0) / it.totalCount : 0,
+        }))
+      : [];
 
     return {
       netuid: it.netuid,
@@ -261,6 +291,7 @@ export function scoreWhales(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}) {
       logo: resolveLogo(it.netuid, meta),
       whaleScore: Math.round(composite * 10) / 10,
       tier,
+      hasColdkeyData: it.hasColdkeyData,
       top1Pct: it.top1Share * 100,
       top5Pct: it.top5Share * 100,
       top10Pct: it.top10Share * 100,
@@ -275,12 +306,12 @@ export function scoreWhales(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}) {
       poolTao: it.poolTao,
       marketCap: it.marketCap,
       alphaInPool: it.alphaInPool,
-      signals: {
+      signals: it.hasColdkeyData ? {
         top1: { score: Math.round((100 - percentileRank(it.top1Share, top1Values)) * 10) / 10 },
         top5: { score: Math.round((100 - percentileRank(it.top5Share, top5Values)) * 10) / 10 },
         hhi: { score: Math.round((100 - percentileRank(it.hhi, hhiValues)) * 10) / 10 },
         impact: { score: Math.round((100 - percentileRank(it.impactPct, impactValues)) * 10) / 10 },
-      },
+      } : null,
     };
   });
 

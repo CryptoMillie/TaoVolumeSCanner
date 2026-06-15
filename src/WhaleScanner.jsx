@@ -82,43 +82,52 @@ function ExpandedRow({ item }) {
         <div style={{ padding: "12px 18px 12px 40px", background: "#0a0a14", borderBottom: "1px solid #131326" }}>
           <div style={{ display: "flex", gap: "28px", flexWrap: "wrap" }}>
             {/* Signal Breakdown */}
-            <div style={{ minWidth: "260px" }}>
-              <div style={{ color: "#333355", fontSize: "9px", letterSpacing: "0.1em", marginBottom: "6px" }}>SIGNAL BREAKDOWN</div>
-              <SignalBar score={item.signals.top1.score} label={`${WHALE_SIGNAL_LABELS.TOP1} (${Math.round(WHALE_SIGNAL_WEIGHTS.TOP1 * 100)}%)`} />
-              <SignalBar score={item.signals.top5.score} label={`${WHALE_SIGNAL_LABELS.TOP5} (${Math.round(WHALE_SIGNAL_WEIGHTS.TOP5 * 100)}%)`} />
-              <SignalBar score={item.signals.hhi.score} label={`${WHALE_SIGNAL_LABELS.HHI} (${Math.round(WHALE_SIGNAL_WEIGHTS.HHI * 100)}%)`} />
-              <SignalBar score={item.signals.impact.score} label={`${WHALE_SIGNAL_LABELS.IMPACT} (${Math.round(WHALE_SIGNAL_WEIGHTS.IMPACT * 100)}%)`} />
-            </div>
+            {item.signals ? (
+              <div style={{ minWidth: "260px" }}>
+                <div style={{ color: "#333355", fontSize: "9px", letterSpacing: "0.1em", marginBottom: "6px" }}>SIGNAL BREAKDOWN</div>
+                <SignalBar score={item.signals.top1.score} label={`${WHALE_SIGNAL_LABELS.TOP1} (${Math.round(WHALE_SIGNAL_WEIGHTS.TOP1 * 100)}%)`} />
+                <SignalBar score={item.signals.top5.score} label={`${WHALE_SIGNAL_LABELS.TOP5} (${Math.round(WHALE_SIGNAL_WEIGHTS.TOP5 * 100)}%)`} />
+                <SignalBar score={item.signals.hhi.score} label={`${WHALE_SIGNAL_LABELS.HHI} (${Math.round(WHALE_SIGNAL_WEIGHTS.HHI * 100)}%)`} />
+                <SignalBar score={item.signals.impact.score} label={`${WHALE_SIGNAL_LABELS.IMPACT} (${Math.round(WHALE_SIGNAL_WEIGHTS.IMPACT * 100)}%)`} />
+              </div>
+            ) : (
+              <div style={{ minWidth: "260px" }}>
+                <div style={{ color: "#333355", fontSize: "9px", letterSpacing: "0.1em", marginBottom: "6px" }}>SIGNAL BREAKDOWN</div>
+                <div style={{ color: "#1e1e33", fontSize: "10px" }}>Coldkey distribution data unavailable</div>
+              </div>
+            )}
 
             {/* Top 5 Holders */}
-            <div style={{ minWidth: "240px" }}>
-              <div style={{ color: "#333355", fontSize: "9px", letterSpacing: "0.1em", marginBottom: "6px" }}>TOP 5 HOLDERS</div>
-              <div style={{ fontSize: "10px", lineHeight: "1.8" }}>
-                {item.topHolders.map((h, i) => (
-                  <div key={i}>
-                    <span style={{ color: "#282844", marginRight: "6px" }}>#{i + 1}</span>
-                    <span style={{ color: "#4488ff", fontFamily: "inherit" }}>{truncateColdkey(h.coldkey)}</span>
-                    <span style={{ color: "#555577", marginLeft: "8px" }}>{h.count} reg</span>
-                    <span style={{ color: h.share > 0.30 ? "#ff4455" : h.share > 0.15 ? "#ddaa00" : "#555577", marginLeft: "6px", fontWeight: 600 }}>
-                      {(h.share * 100).toFixed(1)}%
-                    </span>
-                  </div>
-                ))}
+            {item.topHolders.length > 0 && (
+              <div style={{ minWidth: "240px" }}>
+                <div style={{ color: "#333355", fontSize: "9px", letterSpacing: "0.1em", marginBottom: "6px" }}>TOP 5 HOLDERS</div>
+                <div style={{ fontSize: "10px", lineHeight: "1.8" }}>
+                  {item.topHolders.map((h, i) => (
+                    <div key={i}>
+                      <span style={{ color: "#282844", marginRight: "6px" }}>#{i + 1}</span>
+                      <span style={{ color: "#4488ff", fontFamily: "inherit" }}>{truncateColdkey(h.coldkey)}</span>
+                      <span style={{ color: "#555577", marginLeft: "8px" }}>{h.count} reg</span>
+                      <span style={{ color: h.share > 0.30 ? "#ff4455" : h.share > 0.15 ? "#ddaa00" : "#555577", marginLeft: "6px", fontWeight: 600 }}>
+                        {(h.share * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Raw Metrics */}
             <div style={{ minWidth: "200px" }}>
               <div style={{ color: "#333355", fontSize: "9px", letterSpacing: "0.1em", marginBottom: "6px" }}>METRICS</div>
               <div style={{ fontSize: "10px", lineHeight: "1.8" }}>
-                <div><span style={{ color: "#282844" }}>HHI:</span> <span style={{ color: item.hhi > 2500 ? "#ff4455" : item.hhi > 1500 ? "#ddaa00" : "#555577" }}>{item.hhi}</span> <span style={{ color: "#1e1e33", fontSize: "9px" }}>{item.hhi > 2500 ? "(highly concentrated)" : item.hhi > 1500 ? "(moderately concentrated)" : "(competitive)"}</span></div>
-                <div><span style={{ color: "#282844" }}>Unique Coldkeys:</span> <span style={{ color: "#555577" }}>{item.uniqueColdkeys}</span></div>
-                <div><span style={{ color: "#282844" }}>Total Registrations:</span> <span style={{ color: "#555577" }}>{item.totalCount}</span></div>
+                {item.hasColdkeyData && <div><span style={{ color: "#282844" }}>HHI:</span> <span style={{ color: item.hhi > 2500 ? "#ff4455" : item.hhi > 1500 ? "#ddaa00" : "#555577" }}>{item.hhi}</span> <span style={{ color: "#1e1e33", fontSize: "9px" }}>{item.hhi > 2500 ? "(highly concentrated)" : item.hhi > 1500 ? "(moderately concentrated)" : "(competitive)"}</span></div>}
+                {item.hasColdkeyData && <div><span style={{ color: "#282844" }}>Unique Coldkeys:</span> <span style={{ color: "#555577" }}>{item.uniqueColdkeys}</span></div>}
+                {item.hasColdkeyData && <div><span style={{ color: "#282844" }}>Total Registrations:</span> <span style={{ color: "#555577" }}>{item.totalCount}</span></div>}
                 <div><span style={{ color: "#282844" }}>Pool Size:</span> <span style={{ color: "#555577" }}>{fTao(item.poolTao)} TAO</span></div>
                 {item.marketCap > 0 && <div><span style={{ color: "#282844" }}>Market Cap:</span> <span style={{ color: "#555577" }}>${fTao(item.marketCap)}</span></div>}
-                <div><span style={{ color: "#282844" }}>Impact Model:</span> <span style={{ color: "#555577" }}>whale_share {"\u00D7"} (2 - whale_share)</span></div>
-                <div><span style={{ color: "#282844" }}>Top Whale Share:</span> <span style={{ color: "#555577" }}>{item.top1Pct.toFixed(1)}%</span></div>
-                <div><span style={{ color: "#282844" }}>Est. Price Impact:</span> <span style={{ color: IMPACT_COLORS[item.impactSeverity] }}>{item.impactPct.toFixed(1)}% ({item.impactSeverity})</span></div>
+                {item.hasColdkeyData && <div><span style={{ color: "#282844" }}>Impact Model:</span> <span style={{ color: "#555577" }}>whale_share {"\u00D7"} (2 - whale_share)</span></div>}
+                {item.hasColdkeyData && <div><span style={{ color: "#282844" }}>Top Whale Share:</span> <span style={{ color: "#555577" }}>{item.top1Pct.toFixed(1)}%</span></div>}
+                {item.hasColdkeyData && <div><span style={{ color: "#282844" }}>Est. Price Impact:</span> <span style={{ color: IMPACT_COLORS[item.impactSeverity] }}>{item.impactPct.toFixed(1)}% ({item.impactSeverity})</span></div>}
               </div>
             </div>
           </div>
@@ -427,10 +436,10 @@ export default function WhaleScanner() {
                       </td>
                       <td style={S.cell}><ScoreBadge score={s.whaleScore} tier={s.tier} /></td>
                       <td style={S.cell}><TierLabel tier={s.tier} /></td>
-                      <td style={{ ...S.cell, color: s.top1Pct > 50 ? "#ff4455" : s.top1Pct > 30 ? "#ddaa00" : "#555577" }}>{s.top1Pct.toFixed(1)}</td>
-                      <td style={{ ...S.cell, color: s.top5Pct > 80 ? "#ff4455" : s.top5Pct > 60 ? "#ddaa00" : "#555577" }}>{s.top5Pct.toFixed(1)}</td>
-                      <td style={{ ...S.cell, color: "#555577" }}>{s.top10Pct.toFixed(1)}</td>
-                      <td style={S.cell}><ImpactBadge pct={s.impactPct} severity={s.impactSeverity} /></td>
+                      <td style={{ ...S.cell, color: !s.hasColdkeyData ? "#1e1e33" : s.top1Pct > 50 ? "#ff4455" : s.top1Pct > 30 ? "#ddaa00" : "#555577" }}>{s.hasColdkeyData ? s.top1Pct.toFixed(1) : "N/A"}</td>
+                      <td style={{ ...S.cell, color: !s.hasColdkeyData ? "#1e1e33" : s.top5Pct > 80 ? "#ff4455" : s.top5Pct > 60 ? "#ddaa00" : "#555577" }}>{s.hasColdkeyData ? s.top5Pct.toFixed(1) : "N/A"}</td>
+                      <td style={{ ...S.cell, color: !s.hasColdkeyData ? "#1e1e33" : "#555577" }}>{s.hasColdkeyData ? s.top10Pct.toFixed(1) : "N/A"}</td>
+                      <td style={S.cell}>{s.hasColdkeyData ? <ImpactBadge pct={s.impactPct} severity={s.impactSeverity} /> : <span style={{ color: "#1e1e33" }}>N/A</span>}</td>
                       <td style={S.cell}>
                         {s.flags.length > 0
                           ? s.flags.map((f, fi) => <FlagBadge key={fi} flag={f} />)
