@@ -9,6 +9,7 @@ import PurityScanner from "./PurityScanner.jsx";
 import GemScanner from "./GemScanner.jsx";
 import ConvictionScanner from "./ConvictionScanner.jsx";
 import BurnScanner from "./BurnScanner.jsx";
+import WhaleScanner from "./WhaleScanner.jsx";
 
 const TAB_STYLE = (active) => ({
   background: active ? "#1818cc" : "transparent",
@@ -69,9 +70,12 @@ export default function App() {
         <button onClick={() => setTab("burn")} style={TAB_STYLE(tab === "burn")}>
           BURN SCANNER {"\uD83D\uDD25"}
         </button>
+        <button onClick={() => setTab("whale")} style={TAB_STYLE(tab === "whale")}>
+          WHALE WATCHER {"\uD83D\uDC33"}
+        </button>
       </div>
 
-      {tab === "volume" ? <VolumeScanner /> : tab === "sri" ? <SRIScanner /> : tab === "health" ? <HealthScanner /> : tab === "intel" ? <IntelScanner /> : tab === "alpha" ? <AlphaScanner /> : tab === "purity" ? <PurityScanner /> : tab === "gem" ? <GemScanner /> : tab === "conviction" ? <ConvictionScanner /> : tab === "burn" ? <BurnScanner /> : <VolumeScanner />}
+      {tab === "volume" ? <VolumeScanner /> : tab === "sri" ? <SRIScanner /> : tab === "health" ? <HealthScanner /> : tab === "intel" ? <IntelScanner /> : tab === "alpha" ? <AlphaScanner /> : tab === "purity" ? <PurityScanner /> : tab === "gem" ? <GemScanner /> : tab === "conviction" ? <ConvictionScanner /> : tab === "burn" ? <BurnScanner /> : tab === "whale" ? <WhaleScanner /> : <VolumeScanner />}
     </div>
     </DataProvider>
   );
