@@ -226,7 +226,7 @@ export default function WhaleScanner() {
   const [sortDir, setSortDir] = useState("asc");
   const [filter, setFilter] = useState("all");
   const [auto, setAuto] = useState(true);
-  const [freq] = useState(60);
+  const [freq] = useState(300); // 5 min auto-refresh (coldkey fetch is rate-limited)
   const timerRef = useRef();
   const scanningRef = useRef(false);
 
@@ -240,18 +240,28 @@ export default function WhaleScanner() {
         refreshTaoStats(),
         new Promise(r => setTimeout(r, 400)),
       ]);
+
+      // Show all subnets immediately (no coldkey data yet)
+      const initialResults = scoreWhales(subnets, pools, meta, {});
+      setScored(initialResults);
+      setTs(new Date());
+      setLoading(false);
+
+      // Fetch coldkey data (rate-limited, uses cache for repeat scans)
       const subnetArr = Array.isArray(subnets) ? subnets : (subnets?.data || []);
       const netuids = subnetArr
         .map(s => s.netuid ?? s.subnet_id)
         .filter(id => id != null);
       const coldkeyMap = await fetchColdkeyDistributionMap(netuids);
+
+      // Re-score with full coldkey data
       const results = scoreWhales(subnets, pools, meta, coldkeyMap);
       setScored(results);
       setTs(new Date());
     } catch (e) {
       setErr(e.message || String(e));
+      setLoading(false);
     }
-    setLoading(false);
     scanningRef.current = false;
   }, []);
 

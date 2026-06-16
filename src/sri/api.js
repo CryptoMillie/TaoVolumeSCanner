@@ -120,20 +120,39 @@ export async function fetchColdkeyDistribution(netuid) {
   const cached = getCached(key);
   if (cached) return cached;
 
-  const data = await fetchWithAuth(
-    `https://api.taostats.io/api/subnet/distribution/coldkey/v1?netuid=${netuid}&limit=500`
-  );
-  setCache(key, data);
-  return data;
+  // Retry with exponential backoff on 429
+  const MAX_RETRIES = 3;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const headers = {};
+    if (API_KEY) headers["Authorization"] = API_KEY;
+    const res = await fetch(
+      `https://api.taostats.io/api/subnet/distribution/coldkey/v1?netuid=${netuid}&limit=500`,
+      { headers }
+    );
+    if (res.status === 429) {
+      if (attempt < MAX_RETRIES) {
+        // Backoff: 12s, 24s, 48s — respect TaoStats rate window
+        await new Promise(r => setTimeout(r, 12000 * Math.pow(2, attempt)));
+        continue;
+      }
+      return null; // exhausted retries
+    }
+    if (!res.ok) return null; // non-retryable error
+    const data = await res.json();
+    setCache(key, data);
+    return data;
+  }
+  return null;
 }
 
 /**
- * Fetch coldkey distribution for all netuids in parallel (staggered to avoid 429).
+ * Fetch coldkey distribution for all netuids sequentially with rate-limit awareness.
+ * Uses small batches with generous delays to stay within TaoStats rate limits (~5 req/min).
  * Returns a map: netuid -> { uniqueColdkeys, totalCount, entries[] }
  */
 export async function fetchColdkeyDistributionMap(netuids) {
-  const BATCH_SIZE = 25;
-  const STAGGER_MS = 200;
+  const BATCH_SIZE = 3;
+  const STAGGER_MS = 4000; // 4s between batches (~3 req per 4s = safe under 5/min with margin)
   const map = {};
 
   for (let i = 0; i < netuids.length; i += BATCH_SIZE) {
@@ -143,7 +162,7 @@ export async function fetchColdkeyDistributionMap(netuids) {
     );
     results.forEach((result, idx) => {
       const netuid = batch[idx];
-      if (result.status === "fulfilled") {
+      if (result.status === "fulfilled" && result.value != null) {
         const raw = result.value;
         const entries = Array.isArray(raw) ? raw : (raw?.data || []);
         const uniqueColdkeys = entries.length;
