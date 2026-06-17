@@ -150,10 +150,12 @@ export async function fetchColdkeyDistribution(netuid) {
  * Uses small batches with generous delays to stay within TaoStats rate limits (~5 req/min).
  * Returns a map: netuid -> { uniqueColdkeys, totalCount, entries[] }
  */
-export async function fetchColdkeyDistributionMap(netuids) {
-  const BATCH_SIZE = 3;
-  const STAGGER_MS = 4000; // 4s between batches (~3 req per 4s = safe under 5/min with margin)
+export async function fetchColdkeyDistributionMap(netuids, onProgress) {
+  const BATCH_SIZE = 2;
+  const STAGGER_MS = 13000; // 13s between batches — stay well under TaoStats ~5 req/min
   const map = {};
+  let completed = 0;
+  let failed = 0;
 
   for (let i = 0; i < netuids.length; i += BATCH_SIZE) {
     const batch = netuids.slice(i, i + BATCH_SIZE);
@@ -162,14 +164,18 @@ export async function fetchColdkeyDistributionMap(netuids) {
     );
     results.forEach((result, idx) => {
       const netuid = batch[idx];
+      completed++;
       if (result.status === "fulfilled" && result.value != null) {
         const raw = result.value;
         const entries = Array.isArray(raw) ? raw : (raw?.data || []);
         const uniqueColdkeys = entries.length;
         const totalCount = entries.reduce((sum, e) => sum + (e.count || 0), 0);
         map[netuid] = { uniqueColdkeys, totalCount, entries };
+      } else {
+        failed++;
       }
     });
+    if (onProgress) onProgress({ completed, total: netuids.length, failed, map: { ...map } });
     if (i + BATCH_SIZE < netuids.length) {
       await new Promise(r => setTimeout(r, STAGGER_MS));
     }

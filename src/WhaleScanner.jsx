@@ -219,6 +219,7 @@ export default function WhaleScanner() {
   const { refreshTaoStats } = useSharedData();
   const [scored, setScored] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [coldkeyProgress, setColdkeyProgress] = useState(null); // { completed, total, failed }
   const [err, setErr] = useState(null);
   const [ts, setTs] = useState(null);
   const [expanded, setExpanded] = useState({});
@@ -235,6 +236,7 @@ export default function WhaleScanner() {
     scanningRef.current = true;
     setLoading(true);
     setErr(null);
+    setColdkeyProgress(null);
     try {
       const [{ subnets, pools, meta }] = await Promise.all([
         refreshTaoStats(),
@@ -245,23 +247,36 @@ export default function WhaleScanner() {
       const initialResults = scoreWhales(subnets, pools, meta, {});
       setScored(initialResults);
       setTs(new Date());
-      setLoading(false);
 
       // Fetch coldkey data (rate-limited, uses cache for repeat scans)
       const subnetArr = Array.isArray(subnets) ? subnets : (subnets?.data || []);
       const netuids = subnetArr
         .map(s => s.netuid ?? s.subnet_id)
         .filter(id => id != null);
-      const coldkeyMap = await fetchColdkeyDistributionMap(netuids);
 
-      // Re-score with full coldkey data
+      setColdkeyProgress({ completed: 0, total: netuids.length, failed: 0 });
+
+      const coldkeyMap = await fetchColdkeyDistributionMap(netuids, (progress) => {
+        setColdkeyProgress({ completed: progress.completed, total: progress.total, failed: progress.failed });
+        // Incrementally update the table as batches complete
+        const results = scoreWhales(subnets, pools, meta, progress.map);
+        setScored(results);
+      });
+
+      // Final re-score with complete coldkey data
       const results = scoreWhales(subnets, pools, meta, coldkeyMap);
       setScored(results);
       setTs(new Date());
+
+      const failedCount = netuids.length - Object.keys(coldkeyMap).length;
+      if (failedCount > 0) {
+        setErr(`Coldkey data unavailable for ${failedCount} of ${netuids.length} subnets (API rate limit). Cached data will improve on next scan.`);
+      }
     } catch (e) {
       setErr(e.message || String(e));
-      setLoading(false);
     }
+    setLoading(false);
+    setColdkeyProgress(null);
     scanningRef.current = false;
   }, []);
 
@@ -369,7 +384,7 @@ export default function WhaleScanner() {
             AUTO
           </label>
           <button onClick={scan} disabled={loading} style={S.btn(loading)}>
-            {loading ? "SCANNING..." : "\u27F3 SCAN"}
+            {loading ? (coldkeyProgress ? `${coldkeyProgress.completed}/${coldkeyProgress.total}` : "SCANNING...") : "\u27F3 SCAN"}
           </button>
         </div>
       </div>
@@ -392,11 +407,26 @@ export default function WhaleScanner() {
         </div>
       )}
 
-      {loading && scored.length === 0 && (
+      {loading && scored.length === 0 && !coldkeyProgress && (
         <div style={{ padding: "70px", textAlign: "center", color: "#1e1e33" }}>
           <div style={{ fontSize: "28px", animation: "pulse 1s infinite" }}>{"\uD83D\uDC33"}</div>
           <div style={{ marginTop: "12px", letterSpacing: "0.2em", fontSize: "13px" }}>SCANNING FOR WHALES...</div>
           <div style={{ color: "#141426", marginTop: "6px", fontSize: "10px" }}>Analyzing holder concentration across subnets</div>
+        </div>
+      )}
+
+      {coldkeyProgress && (
+        <div style={{ margin: "0 18px", padding: "8px 14px", background: "#0d0d1a", border: "1px solid #1a1a2e", borderRadius: "4px", display: "flex", alignItems: "center", gap: "12px" }}>
+          <div style={{ fontSize: "16px", animation: "pulse 1s infinite" }}>{"\uD83D\uDC33"}</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+              <span style={{ color: "#5555ff", fontSize: "10px", letterSpacing: "0.1em" }}>FETCHING HOLDER DATA...</span>
+              <span style={{ color: "#444466", fontSize: "10px" }}>{coldkeyProgress.completed} / {coldkeyProgress.total} subnets{coldkeyProgress.failed > 0 ? ` (${coldkeyProgress.failed} rate-limited)` : ""}</span>
+            </div>
+            <div style={{ height: "3px", background: "#151528", borderRadius: "2px", overflow: "hidden" }}>
+              <div style={{ height: "100%", background: "#5555ff", borderRadius: "2px", transition: "width 0.3s", width: `${Math.round((coldkeyProgress.completed / coldkeyProgress.total) * 100)}%` }} />
+            </div>
+          </div>
         </div>
       )}
 
