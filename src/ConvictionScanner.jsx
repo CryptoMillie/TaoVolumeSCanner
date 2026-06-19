@@ -561,9 +561,11 @@ export default function ConvictionScanner() {
       {/* Error state */}
       {err && (
         <div style={S.error}>
-          RPC Error: {err}
+          {err.includes("TaoStats") ? "API Error" : "RPC Error"}: {err}
           <div style={{ marginTop: "8px", color: "#555577", fontSize: "10px" }}>
-            Check network connection to Bittensor Finney endpoint
+            {err.includes("TaoStats")
+              ? "Check TaoStats API key or wait for rate limit to reset"
+              : "Check network connection to Bittensor Finney endpoint"}
           </div>
         </div>
       )}
