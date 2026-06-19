@@ -1,8 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useSharedData } from "./DataContext.jsx";
 import { fetchDevActivity } from "./gem/api.js";
 import { scoreGems } from "./gem/scoring.js";
 import { GEM_TIER_CONFIG, QUADRANTS, SIGNAL_LINES } from "./gem/constants.js";
+import { fetchAllRepoData } from "./code/api.js";
+import { scoreCode } from "./code/scoring.js";
+import { DIMENSIONS, PILLARS, CODE_TIERS, getTier, getTierColor } from "./code/constants.js";
 
 function fN(v) { return v >= 1e9 ? `${(v / 1e9).toFixed(2)}B` : v >= 1e6 ? `${(v / 1e6).toFixed(2)}M` : v >= 1e3 ? `${(v / 1e3).toFixed(0)}K` : `${v.toFixed(0)}`; }
 function fP(v) { return (v >= 0 ? "+" : "") + v.toFixed(1) + "%"; }
@@ -307,10 +310,214 @@ function GemLeaderboard({ data }) {
   );
 }
 
+// ─── Code Quality Radar Components ────────────────────────────
+function CodeTierBadge({ score }) {
+  const tier = getTier(score);
+  return (
+    <span style={{ background: tier.bg, border: `1px solid ${tier.border}`, color: tier.color, padding: "1px 6px", borderRadius: "3px", fontSize: "9px", fontWeight: 700, letterSpacing: "0.04em" }}>
+      {tier.label}
+    </span>
+  );
+}
+
+function DimensionBar({ dim, score }) {
+  const color = getTierColor(score);
+  const pct = Math.max(0, Math.min(100, (score / 10) * 100));
+  const tier = getTier(score);
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "3px", padding: "3px 0" }}>
+      <span style={{ color: "#282844", fontSize: "10px", width: "20px", textAlign: "right", fontFamily: "inherit" }}>
+        {String(dim.id).padStart(2, "0")}
+      </span>
+      <span style={{ color: "#666688", fontSize: "10px", width: "180px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        {dim.name}
+      </span>
+      <div style={{ flex: 1, maxWidth: "200px", height: "8px", background: "#0d0d1a", borderRadius: "4px", overflow: "hidden" }}>
+        <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: "4px", transition: "width 0.3s" }} />
+      </div>
+      <span style={{ color, fontSize: "11px", fontWeight: 700, width: "30px", textAlign: "right" }}>
+        {score.toFixed(1)}
+      </span>
+      <CodeTierBadge score={score} />
+    </div>
+  );
+}
+
+function CodeExpandedRow({ item }) {
+  const pillarGroups = Object.entries(PILLARS);
+  return (
+    <tr>
+      <td colSpan={8} style={{ padding: 0 }}>
+        <div style={{ padding: "12px 18px 12px 40px", background: "#0a0a14", borderBottom: "1px solid #131326" }}>
+          <div style={{ display: "flex", gap: "8px", marginBottom: "10px", alignItems: "center" }}>
+            <span style={{ color: "#555577", fontSize: "11px" }}>{item.name}</span>
+            {item.repoUrl && (
+              <a href={item.repoUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#4488ff", fontSize: "10px", textDecoration: "none" }}>
+                view repo {"\u2197"}
+              </a>
+            )}
+          </div>
+          {pillarGroups.map(([pillarKey, pillarDef]) => {
+            const dims = DIMENSIONS.filter(d => d.pillar === pillarKey);
+            return (
+              <div key={pillarKey} style={{ marginBottom: "10px" }}>
+                <div style={{ color: "#333355", fontSize: "9px", letterSpacing: "0.1em", marginBottom: "4px", fontWeight: 600 }}>
+                  {pillarDef.label.toUpperCase()} ({Math.round(pillarDef.weight * 100)}%)
+                  <span style={{ marginLeft: "8px", color: getTierColor(item.pillarScores[pillarKey]), fontWeight: 700 }}>
+                    {item.pillarScores[pillarKey].toFixed(1)}
+                  </span>
+                </div>
+                {dims.map(dim => (
+                  <DimensionBar key={dim.key} dim={dim} score={item.dimensions[dim.key]} />
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function CodeQualityRadar({ codeScores }) {
+  const [sortCol, setSortCol] = useState("composite");
+  const [expanded, setExpanded] = useState(null);
+
+  if (!codeScores || codeScores.length === 0) return null;
+
+  const tierCounts = {};
+  for (const tier of Object.values(CODE_TIERS)) {
+    tierCounts[tier.label] = 0;
+  }
+  codeScores.forEach(s => {
+    const t = getTier(s.composite);
+    tierCounts[t.label] = (tierCounts[t.label] || 0) + 1;
+  });
+
+  const sorted = [...codeScores].sort((a, b) => {
+    if (sortCol === "composite") return b.composite - a.composite;
+    if (sortCol === "name") return a.name.localeCompare(b.name);
+    if (sortCol === "bittensor") return b.pillarScores.BITTENSOR - a.pillarScores.BITTENSOR;
+    if (sortCol === "engineering") return b.pillarScores.ENGINEERING - a.pillarScores.ENGINEERING;
+    if (sortCol === "sustainability") return b.pillarScores.SUSTAINABILITY - a.pillarScores.SUSTAINABILITY;
+    return b.composite - a.composite;
+  });
+
+  const thStyle = { padding: "6px 8px", fontSize: "10px", color: "#282844", letterSpacing: "0.1em", textAlign: "right", cursor: "pointer", userSelect: "none" };
+  const sortIcon = (col) => sortCol === col ? " \u25BC" : "";
+
+  return (
+    <div style={{ borderBottom: "1px solid #0d0d1e" }}>
+      {/* Header */}
+      <div style={{ padding: "14px 18px 8px", display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+        <span style={{ color: "#3388dd", fontWeight: 700, fontSize: "13px", letterSpacing: "0.08em" }}>
+          {"\u25C8"} CODE QUALITY RADAR
+        </span>
+        <span style={{ color: "#282844", fontSize: "10px" }}>
+          {codeScores.length} subnet{codeScores.length !== 1 ? "s" : ""} with repo data
+        </span>
+        <div style={{ display: "flex", gap: "6px" }}>
+          {Object.values(CODE_TIERS).map(tier => (
+            tierCounts[tier.label] > 0 && (
+              <span key={tier.label} style={{ background: tier.bg, border: `1px solid ${tier.border}`, color: tier.color, padding: "2px 6px", borderRadius: "3px", fontSize: "9px", fontWeight: 600 }}>
+                {tierCounts[tier.label]} {tier.label}
+              </span>
+            )
+          ))}
+        </div>
+      </div>
+
+      {/* Table */}
+      <div style={{ padding: "0 18px 14px", overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "700px" }}>
+          <thead>
+            <tr style={{ background: "#0a0a14", borderBottom: "1px solid #131326" }}>
+              <th style={{ ...thStyle, textAlign: "left", width: "30px", cursor: "default" }}>#</th>
+              <th style={{ ...thStyle, textAlign: "left" }} onClick={() => setSortCol("name")}>SUBNET{sortIcon("name")}</th>
+              <th style={{ ...thStyle, width: "80px" }} onClick={() => setSortCol("composite")}>CODE SCORE{sortIcon("composite")}</th>
+              <th style={{ ...thStyle, width: "90px" }}>TIER</th>
+              <th style={{ ...thStyle, width: "70px" }} onClick={() => setSortCol("bittensor")}>BT MECH{sortIcon("bittensor")}</th>
+              <th style={{ ...thStyle, width: "70px" }} onClick={() => setSortCol("engineering")}>ENGR{sortIcon("engineering")}</th>
+              <th style={{ ...thStyle, width: "70px" }} onClick={() => setSortCol("sustainability")}>SUSTAIN{sortIcon("sustainability")}</th>
+              <th style={{ ...thStyle, width: "50px", cursor: "default" }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((s, i) => {
+              const tier = getTier(s.composite);
+              const isExpanded = expanded === s.netuid;
+              return (
+                <React.Fragment key={s.netuid}>
+                  <tr
+                    className="trow"
+                    style={{
+                      background: i % 2 === 0 ? "#0b0b15" : "#090912",
+                      borderBottom: "1px solid #0e0e18",
+                      cursor: "pointer",
+                    }}
+                    onClick={() => setExpanded(isExpanded ? null : s.netuid)}
+                  >
+                    <td style={{ padding: "8px 8px", color: "#1e1e33" }}>{i + 1}</td>
+                    <td style={{ padding: "8px 8px" }}>
+                      <span style={{ color: tier.color, fontWeight: 600 }}>{s.name}</span>
+                      <span style={{ color: "#1e1e30", fontSize: "10px", marginLeft: "7px" }}>SN{s.netuid}</span>
+                      {!s.hasRepoData && <span style={{ color: "#2a2a44", fontSize: "8px", marginLeft: "5px" }}>dev activity only</span>}
+                    </td>
+                    <td style={{ padding: "8px 8px", textAlign: "right" }}>
+                      <span style={{ background: tier.bg, border: `1px solid ${tier.border}`, color: tier.color, padding: "2px 8px", borderRadius: "3px", fontSize: "12px", fontWeight: 700 }}>
+                        {s.composite.toFixed(1)}
+                      </span>
+                    </td>
+                    <td style={{ padding: "8px 8px", textAlign: "right" }}>
+                      <CodeTierBadge score={s.composite} />
+                    </td>
+                    <td style={{ padding: "8px 8px", textAlign: "right" }}>
+                      <MiniBar score={s.pillarScores.BITTENSOR} />
+                    </td>
+                    <td style={{ padding: "8px 8px", textAlign: "right" }}>
+                      <MiniBar score={s.pillarScores.ENGINEERING} />
+                    </td>
+                    <td style={{ padding: "8px 8px", textAlign: "right" }}>
+                      <MiniBar score={s.pillarScores.SUSTAINABILITY} />
+                    </td>
+                    <td style={{ padding: "8px 8px", textAlign: "center", color: "#333355", fontSize: "10px" }}>
+                      {isExpanded ? "\u25B2" : "\u25BC"}
+                    </td>
+                  </tr>
+                  {isExpanded && <CodeExpandedRow item={s} />}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Disclaimer */}
+      <div style={{ padding: "0 18px 12px", color: "#1e1e33", fontSize: "9px", fontStyle: "italic" }}>
+        Approximated from public signals (GitHub API + TaoStats dev activity + on-chain data) — not a formal code audit
+      </div>
+    </div>
+  );
+}
+
+function MiniBar({ score }) {
+  const color = getTierColor(score);
+  const pct = Math.max(0, Math.min(100, (score / 10) * 100));
+  return (
+    <div style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+      <div style={{ width: "40px", height: "5px", background: "#0d0d1a", borderRadius: "3px", overflow: "hidden" }}>
+        <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: "3px" }} />
+      </div>
+      <span style={{ color, fontSize: "10px", fontWeight: 600, minWidth: "22px" }}>{score.toFixed(1)}</span>
+    </div>
+  );
+}
+
 // ─── Main Component ────────────────────────────────────────
 export default function GemScanner() {
   const { refreshTaoStats, refreshCoinGecko } = useSharedData();
   const [scored, setScored] = useState([]);
+  const [codeScores, setCodeScores] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
   const [ts, setTs] = useState(null);
@@ -340,6 +547,34 @@ export default function GemScanner() {
       setProgress("Scoring subnets...");
       const results = scoreGems(tsData.subnets, tsData.pools, tsData.meta, devMap, cgData);
       setScored(results);
+
+      // Fetch GitHub repo data for Code Quality Radar (runs after main scan completes)
+      setProgress("Fetching GitHub repo data...");
+      let repoDataMap = new Map();
+      try {
+        repoDataMap = await fetchAllRepoData(tsData.meta, devMap, ({ completed, total, failed }) => {
+          setProgress(`Fetching GitHub repo data... ${completed}/${total}${failed > 0 ? ` (${failed} failed)` : ""}`);
+        });
+      } catch (e) {
+        console.warn("Code Quality: GitHub fetch failed:", e.message);
+      }
+
+      // Try to reuse cached coldkey data if available
+      let coldkeyMap = {};
+      try {
+        const ckRaw = localStorage.getItem("whale_coldkey_map");
+        if (ckRaw) {
+          const ckEntry = JSON.parse(ckRaw);
+          if (Date.now() - ckEntry.ts < 15 * 60 * 1000) {
+            coldkeyMap = ckEntry.data || {};
+          }
+        }
+      } catch { /* ignore */ }
+
+      setProgress("Scoring code quality...");
+      const codeResults = scoreCode(tsData.subnets, tsData.pools, tsData.meta, devMap, repoDataMap, coldkeyMap);
+      setCodeScores(codeResults);
+
       setTs(new Date());
       setProgress(null);
     } catch (e) {
@@ -559,6 +794,9 @@ export default function GemScanner() {
           </div>
         </div>
       )}
+
+      {/* Code Quality Radar */}
+      {codeScores.length > 0 && <CodeQualityRadar codeScores={codeScores} />}
 
       {/* Footer */}
       <div style={{ padding: "12px 18px", borderTop: "1px solid #0d0d1e", color: "#141420", fontSize: "10px", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "6px" }}>
