@@ -227,7 +227,6 @@ export default function WhaleScanner() {
   const [sortDir, setSortDir] = useState("asc");
   const [filter, setFilter] = useState("all");
   const [auto, setAuto] = useState(true);
-  const [freq] = useState(300); // 5 min auto-refresh (coldkey fetch is rate-limited)
   const timerRef = useRef();
   const scanningRef = useRef(false);
 
@@ -278,14 +277,18 @@ export default function WhaleScanner() {
     setLoading(false);
     setColdkeyProgress(null);
     scanningRef.current = false;
-  }, []);
+    // Schedule next auto-refresh AFTER scan completes (15 min = cache TTL)
+    if (auto) {
+      clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(scan, 15 * 60 * 1000);
+    }
+  }, [auto]);
 
   useEffect(() => { scan(); }, []);
   useEffect(() => {
-    clearInterval(timerRef.current);
-    if (auto) timerRef.current = setInterval(scan, freq * 1000);
-    return () => clearInterval(timerRef.current);
-  }, [auto, freq, scan]);
+    if (!auto) clearTimeout(timerRef.current);
+    return () => clearTimeout(timerRef.current);
+  }, [auto]);
 
   const toggleExpand = (netuid) => {
     setExpanded(prev => ({ ...prev, [netuid]: !prev[netuid] }));

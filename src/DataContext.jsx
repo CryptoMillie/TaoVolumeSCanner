@@ -38,7 +38,7 @@ async function fetchWithRetry(fetchFn, retries = 2) {
     try {
       return await fetchFn();
     } catch (err) {
-      if (i < retries && /429|500|502|503/.test(err.message)) {
+      if (i < retries && /401|429|500|502|503/.test(err.message)) {
         await new Promise(r => setTimeout(r, 1000 * 2 ** i));
       } else {
         throw err;

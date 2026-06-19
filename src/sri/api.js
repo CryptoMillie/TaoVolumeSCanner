@@ -1,4 +1,5 @@
 // SRI API Layer — TaoStats + GitHub subnet metadata with 15-min cache
+// Global request queue to avoid hammering TaoStats across multiple scanners
 
 import { CACHE_TTL_MS } from "./constants.js";
 
@@ -20,14 +21,41 @@ function setCache(key, data) {
   cache[key] = { data, ts: Date.now() };
 }
 
+// ─── Global TaoStats request queue ─────────────────────────
+// Enforces a minimum gap between requests to stay under rate limits.
+const REQUEST_GAP_MS = 1200; // ~50 req/min max across entire app
+let lastRequestTs = 0;
+let requestQueue = Promise.resolve();
+
+function enqueueRequest(fn) {
+  requestQueue = requestQueue.then(async () => {
+    const now = Date.now();
+    const wait = Math.max(0, REQUEST_GAP_MS - (now - lastRequestTs));
+    if (wait > 0) await new Promise(r => setTimeout(r, wait));
+    lastRequestTs = Date.now();
+    return fn();
+  });
+  return requestQueue;
+}
+
 async function fetchWithAuth(url) {
-  const headers = {};
-  if (API_KEY) {
-    headers["Authorization"] = API_KEY;
-  }
-  const res = await fetch(url, { headers });
-  if (!res.ok) throw new Error(`TaoStats ${res.status}: ${res.statusText}`);
-  return res.json();
+  return enqueueRequest(async () => {
+    const headers = {};
+    if (API_KEY) {
+      headers["Authorization"] = API_KEY;
+    }
+    const res = await fetch(url, { headers });
+    if (res.status === 401 || res.status === 429) {
+      // Back off and retry once on auth/rate errors
+      await new Promise(r => setTimeout(r, 5000));
+      lastRequestTs = Date.now();
+      const retry = await fetch(url, { headers });
+      if (!retry.ok) throw new Error(`TaoStats ${retry.status}: ${retry.statusText}`);
+      return retry.json();
+    }
+    if (!res.ok) throw new Error(`TaoStats ${res.status}: ${res.statusText}`);
+    return res.json();
+  });
 }
 
 export async function fetchSubnetLatest() {
@@ -83,6 +111,10 @@ export async function fetchSubnetMeta() {
 }
 
 async function fetchMechData(netuid) {
+  const key = `mech_${netuid}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+
   try {
     const data = await fetchWithAuth(
       `https://api.taostats.io/api/subnet/latest/v1?netuid=${netuid}&mechid=1`
@@ -93,6 +125,7 @@ async function fetchMechData(netuid) {
     const av = parseFloat(entry.active_validators) || 0;
     const am = parseFloat(entry.active_miners) || 0;
     if (av === 0 && am === 0) return null;
+    setCache(key, entry);
     return entry;
   } catch {
     return null;
@@ -100,18 +133,34 @@ async function fetchMechData(netuid) {
 }
 
 export async function fetchMechDataMap(subnetsRaw) {
+  const BATCH_SIZE = 3;
   const subnets = Array.isArray(subnetsRaw) ? subnetsRaw : (subnetsRaw?.data || []);
   const map = {};
-  const results = await Promise.all(
-    subnets.map(async (s) => {
-      const netuid = s.netuid ?? s.subnet_id;
-      const data = await fetchMechData(netuid);
-      return { netuid, data };
-    })
-  );
-  results.forEach(({ netuid, data }) => {
-    if (data) map[netuid] = data;
-  });
+
+  // Resolve cached entries immediately
+  const uncached = [];
+  for (const s of subnets) {
+    const netuid = s.netuid ?? s.subnet_id;
+    const cached = getCached(`mech_${netuid}`);
+    if (cached) {
+      map[netuid] = cached;
+    } else {
+      uncached.push(netuid);
+    }
+  }
+
+  // Fetch uncached in small sequential batches (global queue handles spacing)
+  for (let i = 0; i < uncached.length; i += BATCH_SIZE) {
+    const batch = uncached.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map(netuid => fetchMechData(netuid))
+    );
+    results.forEach((result, idx) => {
+      if (result.status === "fulfilled" && result.value != null) {
+        map[batch[idx]] = result.value;
+      }
+    });
+  }
   return map;
 }
 
@@ -120,27 +169,23 @@ export async function fetchColdkeyDistribution(netuid) {
   const cached = getCached(key);
   if (cached) return cached;
 
-  // Retry with exponential backoff on 429
+  // Use global queue + retry on 401/429
   const MAX_RETRIES = 3;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const headers = {};
-    if (API_KEY) headers["Authorization"] = API_KEY;
-    const res = await fetch(
-      `https://api.taostats.io/api/subnet/distribution/coldkey/v1?netuid=${netuid}&limit=500`,
-      { headers }
-    );
-    if (res.status === 429) {
-      if (attempt < MAX_RETRIES) {
-        // Backoff: 12s, 24s, 48s — respect TaoStats rate window
-        await new Promise(r => setTimeout(r, 12000 * Math.pow(2, attempt)));
+    try {
+      const data = await fetchWithAuth(
+        `https://api.taostats.io/api/subnet/distribution/coldkey/v1?netuid=${netuid}&limit=500`
+      );
+      setCache(key, data);
+      return data;
+    } catch (err) {
+      const is401or429 = /401|429/.test(err.message);
+      if (is401or429 && attempt < MAX_RETRIES) {
+        await new Promise(r => setTimeout(r, 8000 * Math.pow(2, attempt)));
         continue;
       }
-      return null; // exhausted retries
+      return null;
     }
-    if (!res.ok) return null; // non-retryable error
-    const data = await res.json();
-    setCache(key, data);
-    return data;
   }
   return null;
 }
@@ -151,32 +196,44 @@ export async function fetchColdkeyDistribution(netuid) {
  * Returns a map: netuid -> { uniqueColdkeys, totalCount, entries[] }
  */
 export async function fetchColdkeyDistributionMap(netuids, onProgress) {
-  const BATCH_SIZE = 2;
-  const STAGGER_MS = 13000; // 13s between batches — stay well under TaoStats ~5 req/min
+  const BATCH_SIZE = 3;
+  const STAGGER_MS = 2000; // Global queue handles per-request spacing; this just adds batch breathing room
   const map = {};
-  let completed = 0;
   let failed = 0;
 
-  for (let i = 0; i < netuids.length; i += BATCH_SIZE) {
-    const batch = netuids.slice(i, i + BATCH_SIZE);
+  // Resolve cached netuids immediately — skip the API for these
+  const uncached = [];
+  for (const netuid of netuids) {
+    const cached = getCached(`coldkey_dist_${netuid}`);
+    if (cached != null) {
+      const entries = Array.isArray(cached) ? cached : (cached?.data || []);
+      map[netuid] = { uniqueColdkeys: entries.length, totalCount: entries.reduce((sum, e) => sum + (e.count || 0), 0), entries };
+    } else {
+      uncached.push(netuid);
+    }
+  }
+
+  let fetched = 0;
+  if (onProgress) onProgress({ completed: netuids.length - uncached.length, total: netuids.length, failed, map: { ...map } });
+
+  for (let i = 0; i < uncached.length; i += BATCH_SIZE) {
+    const batch = uncached.slice(i, i + BATCH_SIZE);
     const results = await Promise.allSettled(
       batch.map(netuid => fetchColdkeyDistribution(netuid))
     );
     results.forEach((result, idx) => {
       const netuid = batch[idx];
-      completed++;
+      fetched++;
       if (result.status === "fulfilled" && result.value != null) {
         const raw = result.value;
         const entries = Array.isArray(raw) ? raw : (raw?.data || []);
-        const uniqueColdkeys = entries.length;
-        const totalCount = entries.reduce((sum, e) => sum + (e.count || 0), 0);
-        map[netuid] = { uniqueColdkeys, totalCount, entries };
+        map[netuid] = { uniqueColdkeys: entries.length, totalCount: entries.reduce((sum, e) => sum + (e.count || 0), 0), entries };
       } else {
         failed++;
       }
     });
-    if (onProgress) onProgress({ completed, total: netuids.length, failed, map: { ...map } });
-    if (i + BATCH_SIZE < netuids.length) {
+    if (onProgress) onProgress({ completed: netuids.length - uncached.length + fetched, total: netuids.length, failed, map: { ...map } });
+    if (i + BATCH_SIZE < uncached.length) {
       await new Promise(r => setTimeout(r, STAGGER_MS));
     }
   }
