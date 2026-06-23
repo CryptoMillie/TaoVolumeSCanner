@@ -134,7 +134,7 @@ function MethodologySection() {
       {open && (
         <div style={{ padding: "0 18px 16px 18px", maxWidth: "800px" }}>
           <p style={txt}>
-            The <span style={{ color: "#5555ff" }}>Purity Score</span> detects which subnets have genuine organic staking flow versus coordinated pump-and-dump patterns exploiting the TAO Flow EMA system. The EMA uses a 30-day half-life to allocate emissions based on net staking inflows — bad actors exploit this by coordinating staking spikes into small pools to capture disproportionate rewards.
+            The <span style={{ color: "#5555ff" }}>Purity Score</span> detects which subnets have genuine organic staking patterns versus coordinated pump-and-dump behavior. Under v3.4.6, emission is now price-based (price {"\u00D7"} root_prop {"\u00D7"} (1{"\u2212"}miner_burn)), eliminating the old TaoFlow EMA cycling exploit. However, coordinated staking bursts, wallet concentration, and disproportionate pool/emission ratios remain valid signals for detecting manufactured demand.
           </p>
 
           <div style={heading}>S1: POOL SIZE vs EMISSION SHARE (40%)</div>
@@ -142,9 +142,9 @@ function MethodologySection() {
             Flags subnets where emission share is disproportionately high relative to pool size. A small pool earning outsized emissions is suspicious. Calculated as emission_share_pct / pool_size_tao — higher ratio = more suspicious. Inverted for purity score.
           </p>
 
-          <div style={heading}>S2: FLOW SPIKE RECENCY (25%)</div>
+          <div style={heading}>S2: STAKING CONCENTRATION (25%)</div>
           <p style={txt}>
-            Detects subnets where the majority of positive EMA flow was built in a short burst rather than accumulated gradually. If 70%+ of a subnet's 30-day cumulative flow happened recently, that's a coordination signal. Gradual, consistent inflows = organic.
+            Detects subnets where staking inflows are temporally concentrated rather than accumulated gradually. If 70%+ of a subnet's 30-day cumulative flow happened in the last 7 days, that suggests coordinated staking rather than organic growth. Note: The old TaoFlow EMA cycling exploit is dead under v3.4.6, but concentrated staking bursts remain a valid signal for manufactured demand.
           </p>
 
           <div style={heading}>S3: WALLET CONCENTRATION (20%)</div>
@@ -159,7 +159,7 @@ function MethodologySection() {
 
           <div style={heading}>PUMP DETECTION</div>
           <p style={txt}>
-            A "Pump Detected" flag fires when Signal 1 AND Signal 2 both breach thresholds simultaneously — meaning a small pool has disproportionate emissions AND those flows arrived in a recent spike. This dual-trigger reduces false positives.
+            A "Pump Detected" flag fires when Signal 1 AND Signal 2 both breach thresholds simultaneously — meaning a small pool has disproportionate emissions AND staking is temporally concentrated. While this no longer exploits emission allocation directly (v3.4.6 uses symmetric price-based emission), it still indicates coordinated manipulation of pool prices and manufactured demand.
           </p>
 
           <div style={heading}>TIERS</div>
@@ -316,7 +316,7 @@ export default function PurityScanner() {
       <div style={{ background: "#0a0a13", borderBottom: "1px solid #131326", padding: "5px 18px", display: "flex", gap: "18px", flexWrap: "wrap", fontSize: "10px" }}>
         <span style={{ color: "#1e1e33" }}>SIGNALS:</span>
         <span style={{ color: "#282844" }}>S1 Pool/Emit {"\u00D7"}40%</span>
-        <span style={{ color: "#282844" }}>S2 Flow Spike {"\u00D7"}25%</span>
+        <span style={{ color: "#282844" }}>S2 Stake Conc {"\u00D7"}25%</span>
         <span style={{ color: "#282844" }}>S3 Wallets {"\u00D7"}20%</span>
         <span style={{ color: "#282844" }}>S4 Age/Emit {"\u00D7"}15%</span>
         <span style={{ color: "#1e1e33" }}>{"\u00B7"}</span>
@@ -335,7 +335,7 @@ export default function PurityScanner() {
         <div style={{ padding: "70px", textAlign: "center", color: "#1e1e33" }}>
           <div style={{ fontSize: "28px", animation: "pulse 1s infinite" }}>{"\u25C8"}</div>
           <div style={{ marginTop: "12px", letterSpacing: "0.2em", fontSize: "13px" }}>ANALYZING PURITY...</div>
-          <div style={{ color: "#141426", marginTop: "6px", fontSize: "10px" }}>Detecting flow patterns across subnets</div>
+          <div style={{ color: "#141426", marginTop: "6px", fontSize: "10px" }}>Detecting staking patterns across subnets</div>
         </div>
       )}
 
@@ -411,7 +411,7 @@ export default function PurityScanner() {
           Purity Score identifies statistical patterns in staking behavior. It does not confirm intent. Always verify on taostats.io before drawing conclusions.
         </span>
         <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "6px" }}>
-          <span>Data: TaoStats API {"\u00B7"} TAO Flow EMA Exploit Detection {"\u00B7"} Not financial advice</span>
+          <span>Data: TaoStats API {"\u00B7"} Coordinated Staking Detection {"\u00B7"} Not financial advice</span>
           <span>Crypto Millie {"\u2014"} Capital Rotation Intelligence</span>
         </div>
       </div>

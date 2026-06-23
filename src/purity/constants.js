@@ -1,16 +1,19 @@
-// Purity Scanner Constants — TAO Flow EMA Exploit Detection
+// Purity Scanner Constants — Coordinated Staking Detection (post-TaoFlow)
+// Note: TaoFlow EMA-based emission was replaced by price-based emission in v3.4.6.
+// The EMA cycling exploit is dead, but coordinated staking patterns remain useful
+// signals for detecting manufactured demand and pump-and-dump behavior.
 
 // Signal weights (all 4 signals active)
 export const SIGNAL_WEIGHTS = {
   S1: 0.40, // Pool Size vs Emission Share
-  S2: 0.25, // Flow Spike Recency
+  S2: 0.25, // Staking Concentration (temporal pattern)
   S3: 0.20, // Wallet Concentration (coldkey distribution)
   S4: 0.15, // Age vs Emission Share
 };
 
 export const SIGNAL_LABELS = {
   S1: "Pool Size vs Emission Share",
-  S2: "Flow Spike Recency",
+  S2: "Staking Concentration",
   S3: "Wallet Concentration",
   S4: "Age vs Emission Share",
 };

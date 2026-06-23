@@ -1,4 +1,6 @@
-// Burn Scanner Scoring — Uses incentive_burn rate + recycled fields from subnet data
+// Burn Scanner Scoring — Uses incentive_burn (miner_burn) rate + recycled fields from subnet data
+// Post v3.4.6: emission_share = price × root_prop × (1 − miner_burn)
+// Burning miner emission now directly reduces chain-level emission, not just internal alpha.
 
 import {
   BLOCKS_PER_DAY,
@@ -81,6 +83,7 @@ export function scoreBurns(subnets, pools, meta) {
   });
 
   const rows = [];
+  const now = Date.now();
 
   for (const s of subnetArr) {
     const netuid = s.netuid ?? s.subnet_id;
@@ -111,10 +114,36 @@ export function scoreBurns(subnets, pools, meta) {
     const recycledLifetime = parseFloat(s.recycled_lifetime || 0) / 1e9; // rao -> alpha
     const recycled24h = parseFloat(s.recycled_24_hours || 0) / 1e9;
 
-    // Estimated burn rate: emission * incentive_burn = alpha burned per block
+    // --- 3-tier 30d burn estimation ---
+    // Tier 1: emission-based projection (instantaneous rate * 30d)
     const burnPerBlock = emissionPerBlock * incentiveBurn;
     const burnPerDay = burnPerBlock * BLOCKS_PER_DAY;
-    const estimated30dBurn = burnPerDay * HISTORY_DAYS;
+    const emissionEst30d = burnPerDay * HISTORY_DAYS;
+
+    // Tier 2: extrapolate recent 24h activity over 30d
+    const recycled24hEst30d = recycled24h * HISTORY_DAYS;
+
+    // Tier 3: historical daily average from lifetime recycled / subnet age
+    let historicalEst30d = 0;
+    const regTs = s.registration_timestamp;
+    if (recycledLifetime > 0 && regTs) {
+      const ageMs = now - new Date(regTs).getTime();
+      const ageInDays = ageMs / (1000 * 86400);
+      if (ageInDays > 1) {
+        historicalEst30d = (recycledLifetime / ageInDays) * HISTORY_DAYS;
+      }
+    }
+
+    // Use the best available estimate (highest signal wins)
+    const estimated30dBurn = Math.max(emissionEst30d, recycled24hEst30d, historicalEst30d);
+
+    // Track which estimation method was used
+    let estimateSource = "none";
+    if (estimated30dBurn > 0) {
+      if (estimated30dBurn === emissionEst30d) estimateSource = "emission";
+      else if (estimated30dBurn === recycled24hEst30d) estimateSource = "recent";
+      else estimateSource = "historical";
+    }
 
     // Expected total emission over 30d
     const expected30d = emissionPerBlock * BLOCKS_PER_DAY * HISTORY_DAYS;
@@ -128,13 +157,20 @@ export function scoreBurns(subnets, pools, meta) {
     // Status classification based on incentive_burn rate
     const status = classifyBurnStatus(incentiveBurn, recycledLifetime);
 
+    // Chain emission penalty: (1 - miner_burn) — under v3.4.6, burning miner
+    // emission now directly reduces the subnet's share of chain-level emission.
+    // emissionRetention = 1.0 means full emission; 0.0 means zero emission.
+    const emissionRetention = 1 - incentiveBurn;
+
     const row = {
       netuid,
       name,
       incentiveBurn,
+      emissionRetention,
       recycledLifetime,
       recycled24h,
       estimated30dBurn,
+      estimateSource,
       expected30d,
       burnPerDay,
       taoValue30d,

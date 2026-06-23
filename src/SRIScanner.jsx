@@ -198,12 +198,12 @@ function MethodologySection() {
             The <span style={{ color: "#5555ff" }}>Subnet Risk Index (SRI)</span> is a 0-100 composite score derived from 12 on-chain metrics across 4 dimensions. Each subnet is percentile-ranked against all active subnets, then dimension scores are weighted and summed.
           </p>
 
-          <div style={heading}>D1: EMISSION VIABILITY (40%)</div>
+          <div style={heading}>D1: EMISSION STRENGTH (40%)</div>
           <p style={txt}>
-            <span style={dim}>M1.1</span> TAO Flow (7d) — net TAO inflow over 7 days{"\n"}
+            <span style={dim}>M1.1</span> Pool Price (EMA) — smoothed alpha price, primary emission driver under v3.4.6{"\n"}
             <br /><span style={dim}>M1.2</span> Emission Share — subnet's share of total network emissions
             <br /><span style={dim}>M1.3</span> Delist Distance — pool rank (higher = safer from delisting)
-            <br /><span style={dim}>M1.4</span> Capital Retention (30d) — 30-day net flow relative to pool size
+            <br /><span style={dim}>M1.4</span> Root Proportion — tao_weight / (tao_weight + alpha_issuance), share of value returning to TAO holders
           </p>
 
           <div style={heading}>D2: MARKET STRUCTURE (25%)</div>
@@ -398,7 +398,7 @@ export default function SRIScanner() {
 
       <div style={{ background: "#0a0a13", borderBottom: "1px solid #131326", padding: "5px 18px", display: "flex", gap: "18px", flexWrap: "wrap", fontSize: "10px" }}>
         <span style={{ color: "#1e1e33" }}>METHODOLOGY:</span>
-        <span style={{ color: "#282844" }}>D1 Emission {"\u00D7"}40%</span>
+        <span style={{ color: "#282844" }}>D1 Strength {"\u00D7"}40%</span>
         <span style={{ color: "#282844" }}>D2 Market {"\u00D7"}25%</span>
         <span style={{ color: "#282844" }}>D3 Economic {"\u00D7"}20%</span>
         <span style={{ color: "#282844" }}>D4 Governance {"\u00D7"}15%</span>
@@ -440,7 +440,7 @@ export default function SRIScanner() {
                 <th style={{ ...S.thLeft }}>SUBNET</th>
                 <th style={{ ...S.th, width: "58px" }}>SRI</th>
                 <th style={{ ...S.th, width: "56px" }}>TIER</th>
-                <th style={{ ...S.th, width: "70px" }}>D1 EMIT</th>
+                <th style={{ ...S.th, width: "70px" }}>D1 STR</th>
                 <th style={{ ...S.th, width: "70px" }}>D2 MKT</th>
                 <th style={{ ...S.th, width: "70px" }}>D3 ECON</th>
                 <th style={{ ...S.th, width: "70px" }}>D4 GOV</th>

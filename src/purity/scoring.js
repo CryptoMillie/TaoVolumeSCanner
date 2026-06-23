@@ -1,4 +1,6 @@
-// Purity Scoring Engine — Detects coordinated pump-and-dump vs organic staking flow
+// Purity Scoring Engine — Detects coordinated pump-and-dump vs organic staking patterns
+// Post v3.4.6: TaoFlow EMA cycling exploit is dead (price-based emission is symmetric).
+// Flow pattern analysis remains valuable for detecting manufactured demand.
 
 import {
   SIGNAL_WEIGHTS,
@@ -92,10 +94,12 @@ function estimateAgeDays(subnet) {
  *   Higher ratio = suspicious (small pool, disproportionate emission)
  *   Inverted for purity: lower ratio = purer
  *
- * Signal 2 — Flow Spike Recency (25% weight)
- *   Measures: net_flow_7d / net_flow_30d (directional, not absolute)
+ * Signal 2 — Staking Concentration (25% weight)
+ *   Measures: net_flow_7d / net_flow_30d (temporal concentration of staking)
  *   Values near 1.0 = most 30d inflow happened recently = coordination signal
  *   Values near 0.23 (7/30) = uniform gradual flow = organic
+ *   Note: Post-TaoFlow, this no longer detects EMA cycling (that exploit is dead),
+ *   but concentrated staking bursts remain a valid signal for manufactured demand.
  *
  * Signal 3 — Wallet Concentration (20% weight)
  *   Uses coldkey distribution from TaoStats /subnet/distribution/coldkey/v1
@@ -121,7 +125,7 @@ export function scorePurity(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}) {
     if (id != null) poolMap[id] = p;
   });
 
-  // Only score subnets with emission > 0 (zero-emission subnets can't exploit flow EMA)
+  // Only score subnets with emission > 0 (zero-emission subnets have no staking incentive to manipulate)
   const activeSubnets = subnets.filter(s => num(s.emission) > 0);
   if (activeSubnets.length === 0) return [];
 

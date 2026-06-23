@@ -335,6 +335,7 @@ export default function BurnScanner() {
     switch (sortCol) {
       case "netuid": av = a.netuid; bv = b.netuid; break;
       case "incentiveBurn": av = a.incentiveBurn; bv = b.incentiveBurn; break;
+      case "emissionRetention": av = a.emissionRetention; bv = b.emissionRetention; break;
       case "recycledLifetime": av = a.recycledLifetime; bv = b.recycledLifetime; break;
       case "recycled24h": av = a.recycled24h; bv = b.recycled24h; break;
       case "estimated30dBurn": av = a.estimated30dBurn; bv = b.estimated30dBurn; break;
@@ -386,7 +387,7 @@ export default function BurnScanner() {
           </button>
         </div>
         <div style={S.subtitle}>
-          Incentive burn rates and recycled alpha per subnet — deflationary pressure from owner-set burn parameters
+          Miner burn rates and chain emission impact — under v3.4.6, burning directly reduces chain-level emission via (1 - miner_burn)
           {ts && (
             <span style={{ marginLeft: "12px", color: "#333355" }}>
               Last updated: {ts.toLocaleTimeString()}
@@ -564,7 +565,12 @@ export default function BurnScanner() {
                 </th>
                 <th style={S.th} onClick={() => handleSort("incentiveBurn")}>
                   <Tooltip text={TOOLTIPS.incentiveBurn}>
-                    Incentive Burn{sortArrow("incentiveBurn")}
+                    Miner Burn{sortArrow("incentiveBurn")}
+                  </Tooltip>
+                </th>
+                <th style={S.th} onClick={() => handleSort("emissionRetention")}>
+                  <Tooltip text={TOOLTIPS.emissionRetention}>
+                    Chain Emit{sortArrow("emissionRetention")}
                   </Tooltip>
                 </th>
                 <th style={S.th} onClick={() => handleSort("recycledLifetime")}>
@@ -679,6 +685,21 @@ export default function BurnScanner() {
                         )}
                       </td>
 
+                      {/* Chain Emission Retention */}
+                      <td style={{ ...S.td, fontWeight: 600 }}
+                        title={`This subnet receives ${fPct(row.emissionRetention)} of its potential chain emission. Miner burn of ${fPct(row.incentiveBurn)} reduces emission by the (1-b) term.`}
+                      >
+                        <span style={{
+                          color: row.emissionRetention >= 0.95 ? "#33bb66"
+                            : row.emissionRetention >= 0.80 ? "#ddaa00"
+                            : row.emissionRetention >= 0.50 ? "#ff8833"
+                            : row.emissionRetention > 0 ? "#ff4455"
+                            : "#333355",
+                        }}>
+                          {fPct(row.emissionRetention)}
+                        </span>
+                      </td>
+
                       {/* Recycled Lifetime */}
                       <td style={{ ...S.td, color: row.recycledLifetime > 0 ? "#b0b0cc" : "#333355" }}>
                         {row.recycledLifetime > 0 ? fAlpha(row.recycledLifetime) : "\u2014"}
@@ -690,8 +711,18 @@ export default function BurnScanner() {
                       </td>
 
                       {/* Est. 30d Burn */}
-                      <td style={{ ...S.td, color: row.estimated30dBurn > 0 ? "#ddaa00" : "#333355" }}>
-                        {row.estimated30dBurn > 0 ? fAlpha(row.estimated30dBurn) : "\u2014"}
+                      <td style={{ ...S.td, color: row.estimated30dBurn > 0 ? (row.estimateSource === "historical" ? "#aa8800" : "#ddaa00") : "#333355" }}>
+                        {row.estimated30dBurn > 0 ? (
+                          <>
+                            {fAlpha(row.estimated30dBurn)}
+                            {row.estimateSource === "historical" && (
+                              <span title="Based on historical avg (lifetime recycled / age)" style={{ fontSize: "9px", color: "#887733", marginLeft: "3px" }}>avg</span>
+                            )}
+                            {row.estimateSource === "recent" && (
+                              <span title="Based on 24h recycled activity x30" style={{ fontSize: "9px", color: "#aa8833", marginLeft: "3px" }}>24h</span>
+                            )}
+                          </>
+                        ) : "\u2014"}
                       </td>
 
                       {/* TAO Value */}
@@ -746,14 +777,22 @@ export default function BurnScanner() {
                     {/* Expanded detail row */}
                     {isExpanded && (
                       <tr>
-                        <td colSpan={8} style={S.expandedRow}>
+                        <td colSpan={9} style={S.expandedRow}>
                           <div style={{ display: "flex", gap: "32px", flexWrap: "wrap" }}>
                             <div>
                               <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
-                                INCENTIVE BURN RATE
+                                MINER BURN RATE
                               </div>
                               <div style={{ color: row.incentiveBurn > 0 ? "#ff6633" : "#555577" }}>
                                 {fPct(row.incentiveBurn)}
+                              </div>
+                            </div>
+                            <div>
+                              <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
+                                CHAIN EMISSION (1-b)
+                              </div>
+                              <div style={{ color: row.emissionRetention >= 0.95 ? "#33bb66" : row.emissionRetention >= 0.50 ? "#ddaa00" : "#ff4455" }}>
+                                {fPct(row.emissionRetention)}
                               </div>
                             </div>
                             <div>
@@ -782,9 +821,9 @@ export default function BurnScanner() {
                             </div>
                             <div>
                               <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
-                                EST. 30d BURN
+                                EST. 30d BURN{row.estimateSource === "historical" ? " (avg)" : row.estimateSource === "recent" ? " (24h)" : ""}
                               </div>
-                              <div style={{ color: "#ddaa00" }}>
+                              <div style={{ color: row.estimateSource === "historical" ? "#aa8800" : "#ddaa00" }}>
                                 {fAlpha(row.estimated30dBurn)}
                               </div>
                             </div>
@@ -854,7 +893,20 @@ export default function BurnScanner() {
                               color: "#cc66cc",
                               fontSize: "9px",
                             }}>
-                              This subnet has 0% incentive burn rate but {fAlpha(row.recycledLifetime)} alpha recycled all-time. All burns are manual \u2014 the owner is actively buying and burning alpha.
+                              This subnet has 0% miner burn rate but {fAlpha(row.recycledLifetime)} alpha recycled all-time. All burns are manual \u2014 the owner is actively buying and burning alpha.
+                            </div>
+                          )}
+                          {row.incentiveBurn > 0 && (
+                            <div style={{
+                              marginTop: "8px",
+                              padding: "6px 10px",
+                              background: "#0a0a1a",
+                              border: "1px solid #1a1a3a",
+                              borderRadius: "3px",
+                              color: "#6666aa",
+                              fontSize: "9px",
+                            }}>
+                              v3.4.6 chain impact: {fPct(row.incentiveBurn)} miner burn reduces chain emission to {fPct(row.emissionRetention)} of potential. Formula: emission = price {"\u00D7"} root_prop {"\u00D7"} {row.emissionRetention.toFixed(2)}
                             </div>
                           )}
                         </td>

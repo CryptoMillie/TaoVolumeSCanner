@@ -8,7 +8,7 @@ export const DIMENSION_WEIGHTS = {
 };
 
 export const DIMENSION_LABELS = {
-  D1: "Emission Viability",
+  D1: "Emission Strength",
   D2: "Market Structure",
   D3: "Economic Sustainability",
   D4: "Governance & Ops",

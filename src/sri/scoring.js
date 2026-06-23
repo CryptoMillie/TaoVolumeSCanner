@@ -39,12 +39,15 @@ function extractMetrics(subnet, pool, totalEmission, mechData = null) {
   const alphaInPool = pool ? num(pool.alpha_in_pool) : 0;
   const poolRank = pool ? num(pool.rank) : 999;
 
-  // D1: Emission Viability
-  const m1_1 = num(subnet.net_flow_7_days);
-  const m1_2 = totalEmission > 0 ? emission / totalEmission : 0;
-  const m1_3 = poolRank;
-  const netFlow30 = num(subnet.net_flow_30_days);
-  const m1_4 = totalTao > 0 ? netFlow30 / totalTao : 0;
+  // D1: Emission Strength (post-TaoFlow: price × root_prop × (1 − miner_burn))
+  const price = pool ? num(pool.price || pool.alpha_price) : 0;
+  const alphaIssuance = pool ? num(pool.alpha_in_pool) + num(pool.alpha_staked) : 0;
+  const taoWeight = pool ? num(pool.tao_weight || pool.total_tao) : 0;
+  const m1_1 = price; // EMA pool price — primary emission driver
+  const m1_2 = totalEmission > 0 ? emission / totalEmission : 0; // Emission share
+  const m1_3 = poolRank; // Delist distance
+  // Root proportion proxy: tao_weight / (tao_weight + alpha_issuance)
+  const m1_4 = (taoWeight + alphaIssuance) > 0 ? taoWeight / (taoWeight + alphaIssuance) : 0;
 
   // D2: Market Structure
   const m2_1 = totalTao;

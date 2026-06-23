@@ -64,6 +64,7 @@ export const TOOLTIPS = {
   burned30d: "Total alpha derived as burned over the last 30 days. Calculated as expected emission minus actual pool alpha change.",
   taoValue: "Estimated TAO value of the burned alpha, based on current pool price.",
   burnDays: "Number of days (out of 30) where the actual alpha change was less than expected emission, indicating manual burns occurred.",
-  incentiveBurn: "The incentive_burn rate set by the subnet owner. This is the fraction of miner incentive that gets burned instead of distributed. Higher = more deflationary.",
-  status: "Heavy (\u226550% burned) = significant deflation. Moderate (20-50%) = meaningful. Light (5-20%) = some burns. Minimal (<5%) = negligible.",
+  incentiveBurn: "The miner_burn rate (incentive_burn). Under v3.4.6, this directly reduces chain-level emission via (1 - miner_burn). A 50% burn rate means the subnet receives only 50% of its potential chain emission.",
+  emissionRetention: "Chain emission retention = (1 - miner_burn). Shows what fraction of potential chain emission this subnet actually receives. 100% = full emission, 0% = zero emission.",
+  status: "Heavy (\u226550% burned) = severe emission penalty. Moderate (20-50%) = meaningful reduction. Light (5-20%) = minor impact. Minimal (<5%) = negligible.",
 };
