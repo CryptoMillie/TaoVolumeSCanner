@@ -3,10 +3,10 @@
 // Uses GET /api/dev_activity/latest/v1 (paginated, 50/page max).
 // Returns a Map<netuid, devActivityEntry> keyed by netuid for easy join
 // with the canonical subnet/pool registry.
+// Uses shared fetchWithAuth to go through the global request queue.
 
 import { CACHE_TTL_MS } from "./constants.js";
-
-const API_KEY = import.meta.env.VITE_TAOSTATS_API_KEY || "";
+import { fetchWithAuth } from "../sri/api.js";
 
 // ─── localStorage Cache ──────────────────────────────────
 const LS_KEY = "gem_dev_activity";
@@ -35,28 +35,13 @@ function setCache(data) {
 }
 
 /**
- * Fetch with retry + exponential backoff (matches DataContext pattern).
- */
-async function fetchWithRetry(url, headers, retries = 2) {
-  for (let i = 0; i <= retries; i++) {
-    const res = await fetch(url, { headers });
-    if (res.ok) return res.json();
-    if (i < retries && (res.status === 429 || res.status >= 500)) {
-      await new Promise(r => setTimeout(r, 1000 * 2 ** i));
-      continue;
-    }
-    throw new Error(`TaoStats dev_activity ${res.status}: ${res.statusText}`);
-  }
-}
-
-/**
  * Fetch a single page from the TaoStats dev_activity endpoint.
+ * Goes through the global request queue in sri/api.js.
  */
 async function fetchPage(page) {
-  const url = `https://api.taostats.io/api/dev_activity/latest/v1?page=${page}`;
-  const headers = {};
-  if (API_KEY) headers["Authorization"] = API_KEY;
-  return fetchWithRetry(url, headers);
+  return fetchWithAuth(
+    `https://api.taostats.io/api/dev_activity/latest/v1?page=${page}`
+  );
 }
 
 /**

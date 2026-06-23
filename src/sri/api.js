@@ -38,7 +38,7 @@ function enqueueRequest(fn) {
   return requestQueue;
 }
 
-async function fetchWithAuth(url) {
+export async function fetchWithAuth(url) {
   return enqueueRequest(async () => {
     const headers = {};
     if (API_KEY) {
