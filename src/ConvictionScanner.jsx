@@ -315,6 +315,7 @@ export default function ConvictionScanner() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
   const [ts, setTs] = useState(null);
+  const [rpcEndpoint, setRpcEndpoint] = useState(null);
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [sortCol, setSortCol] = useState("lockPct");
@@ -341,6 +342,7 @@ export default function ConvictionScanner() {
       setData(scored);
       setSummary(stats);
       setTs(new Date());
+      setRpcEndpoint(convictionData.rpcEndpoint || null);
 
       // Fetch Gem Zone data for cross-reference (non-blocking)
       try {
@@ -467,6 +469,7 @@ export default function ConvictionScanner() {
                 setData(scored);
                 setSummary(stats);
                 setTs(new Date());
+                setRpcEndpoint(convictionData.rpcEndpoint || null);
               } catch (e) {
                 setErr(e.message);
               } finally {
@@ -488,6 +491,11 @@ export default function ConvictionScanner() {
           {ts && (
             <span style={{ marginLeft: "12px", color: "#333355" }}>
               Last updated: {ts.toLocaleTimeString()}
+              {rpcEndpoint && (
+                <span style={{ marginLeft: "8px", color: "#225522" }}>
+                  • RPC: {rpcEndpoint}
+                </span>
+              )}
             </span>
           )}
         </div>

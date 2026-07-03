@@ -4,6 +4,8 @@
 import { xxhashAsHex } from "@polkadot/util-crypto";
 import {
   FINNEY_WS,
+  RPC_ENDPOINTS,
+  RPC_TIMEOUT_MS,
   MAX_NETUIDS,
   BATCH_SIZE,
   STAGGER_MS,
@@ -139,25 +141,49 @@ function decodeAccountId32(hexStr) {
   return "0x" + hex;
 }
 
-// ─── WebSocket JSON-RPC ───────────────────────────────────
+// ─── WebSocket JSON-RPC with failover ───────────────────────
 
-function wsConnect(url) {
+function wsConnect(url, timeout = RPC_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
-    const timeout = setTimeout(() => {
+    const timer = setTimeout(() => {
       ws.close();
       reject(new Error("WebSocket connection timeout"));
-    }, 15000);
+    }, timeout);
 
     ws.onopen = () => {
-      clearTimeout(timeout);
+      clearTimeout(timer);
       resolve(ws);
     };
     ws.onerror = (e) => {
-      clearTimeout(timeout);
+      clearTimeout(timer);
       reject(new Error("WebSocket error: " + (e.message || "connection failed")));
     };
   });
+}
+
+// Try connecting to RPC endpoints with failover
+async function wsConnectWithFailover() {
+  const errors = [];
+
+  for (let i = 0; i < RPC_ENDPOINTS.length; i++) {
+    const endpoint = RPC_ENDPOINTS[i];
+    try {
+      console.log(`[RPC] Attempting connection to ${endpoint.label}...`);
+      const ws = await wsConnect(endpoint.url);
+      console.log(`[RPC] ✓ Connected via ${endpoint.label}`);
+      return { ws, endpoint: endpoint.label };
+    } catch (err) {
+      console.warn(`[RPC] ✗ ${endpoint.label} failed:`, err.message);
+      errors.push(`${endpoint.label}: ${err.message}`);
+      // Continue to next endpoint
+    }
+  }
+
+  // All endpoints failed
+  throw new Error(
+    `Failed to connect to any Bittensor RPC endpoint. Tried:\n${errors.join("\n")}`
+  );
 }
 
 let rpcId = 1;
@@ -268,9 +294,11 @@ export async function fetchConvictionData(subnetMeta) {
   }
 
   let ws;
+  let rpcEndpoint;
   try {
-    ws = wsConnect(FINNEY_WS);
-    ws = await ws;
+    const connection = await wsConnectWithFailover();
+    ws = connection.ws;
+    rpcEndpoint = connection.endpoint;
   } catch (err) {
     throw new Error("Failed to connect to Bittensor RPC: " + err.message);
   }
@@ -405,6 +433,7 @@ export async function fetchConvictionData(subnetMeta) {
       results,
       currentBlock,
       fetchedAt: Date.now(),
+      rpcEndpoint, // Track which endpoint served this data
       ownerLockCount: ownerEntries.length,
       decayingLockCount: decayingEntries.length,
       hotkeyLockCount: hotkeyEntries.length,

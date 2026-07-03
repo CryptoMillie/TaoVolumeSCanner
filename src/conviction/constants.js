@@ -2,8 +2,14 @@
 
 export const CACHE_TTL_MS = 15 * 60 * 1000; // 15-min cache — matches all other tabs
 
-// RPC endpoint
-export const FINNEY_WS = "wss://entrypoint-finney.opentensor.ai:443";
+// RPC endpoints with failover — try primary → timeout 3s → rotate → log which served
+export const FINNEY_WS = "wss://entrypoint-finney.opentensor.ai:443"; // legacy (kept for compatibility)
+export const RPC_ENDPOINTS = [
+  { url: "wss://entrypoint-finney.opentensor.ai:443", label: "Primary (Finney)" },
+  { url: "wss://rpc.blockmachine.io", label: "Blockmachine Free" },
+  { url: "wss://entrypoint-finney.opentensor.ai:443", label: "Finney Public" }, // fallback to public
+];
+export const RPC_TIMEOUT_MS = 3000; // 3-second timeout per endpoint
 
 // Subnet range to scan
 export const MAX_NETUIDS = 128;
