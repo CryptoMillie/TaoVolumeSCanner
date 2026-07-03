@@ -1,0 +1,67 @@
+{
+  "_comment": "Multi-repo configuration for subnets with code spread across multiple GitHub repositories",
+  "_instructions": "Add any subnet that has multiple repos here. Use lowercase subnet names as keys.",
+
+  "multi_repo_subnets": {
+    "chutes": {
+      "netuid": null,
+      "repos": [
+        {
+          "url": "https://github.com/chutesai/chutes-miner",
+          "primary": true,
+          "weight": 0.5,
+          "description": "Main validator/miner implementation with CI/CD"
+        },
+        {
+          "url": "https://github.com/chutesai/chutes",
+          "primary": false,
+          "weight": 0.3,
+          "description": "Client library/SDK"
+        },
+        {
+          "url": "https://github.com/chutesai/chutes-api",
+          "primary": false,
+          "weight": 0.2,
+          "description": "API server"
+        }
+      ]
+    }
+  },
+
+  "auto_detect_patterns": {
+    "_comment": "Patterns to auto-detect related repos by suffix",
+    "suffixes": ["-miner", "-validator", "-api", "-protocol", "-client", "-sdk"],
+    "enabled": true
+  },
+
+  "aggregation_rules": {
+    "_comment": "How to aggregate signals across multiple repos",
+    "numeric_fields": {
+      "stars": "weighted_sum",
+      "forks": "max",
+      "openIssues": "sum",
+      "size": "sum",
+      "totalFiles": "sum",
+      "codeFileCount": "sum",
+      "testFileCount": "sum"
+    },
+    "boolean_fields": {
+      "hasTests": "any",
+      "hasCI": "any",
+      "hasDocsFolder": "any",
+      "hasReadme": "any",
+      "hasContributing": "any",
+      "hasChangelog": "any",
+      "hasSecurityPolicy": "any",
+      "hasGitignore": "any",
+      "hasEnvFile": "any",
+      "hasExposedSecrets": "any",
+      "hasLockfile": "any",
+      "hasRequirements": "any",
+      "hasBittensorImport": "any",
+      "hasValidatorCode": "any",
+      "hasMinerCode": "any",
+      "hasProtocolCode": "any"
+    }
+  }
+}

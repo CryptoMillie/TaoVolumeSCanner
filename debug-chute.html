@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Debug Chute Repos</title>
+  <style>
+    body {
+      font-family: 'Courier New', monospace;
+      background: #0a0a14;
+      color: #b0b0cc;
+      padding: 20px;
+      font-size: 12px;
+    }
+    pre {
+      background: #0d0d1a;
+      padding: 12px;
+      border: 1px solid #1a1a2e;
+      border-radius: 4px;
+      overflow-x: auto;
+    }
+    button {
+      background: #1818cc;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      cursor: pointer;
+      border-radius: 3px;
+      margin: 5px;
+    }
+    .section {
+      margin: 20px 0;
+      padding: 15px;
+      background: #0d0d1a;
+      border: 1px solid #1a1a2e;
+      border-radius: 4px;
+    }
+    .error { color: #ff4455; }
+    .success { color: #33bb66; }
+    .warning { color: #ddaa00; }
+  </style>
+</head>
+<body>
+  <h1>🔍 Chute Repository Investigation</h1>
+
+  <div class="section">
+    <h2>Step 1: Check Cached Dev Activity</h2>
+    <button onclick="checkDevActivity()">Check Dev Activity Cache</button>
+    <pre id="devOutput">Click button to check...</pre>
+  </div>
+
+  <div class="section">
+    <h2>Step 2: Check GitHub Repo Cache</h2>
+    <button onclick="checkRepoCache()">Check Repo Cache</button>
+    <pre id="repoOutput">Click button to check...</pre>
+  </div>
+
+  <div class="section">
+    <h2>Step 3: Fetch Fresh GitHub Data</h2>
+    <label>GitHub URL: <input type="text" id="githubUrl" size="50" placeholder="https://github.com/owner/repo"></label>
+    <button onclick="fetchGitHub()">Fetch & Analyze</button>
+    <pre id="githubOutput">Enter URL and click to fetch...</pre>
+  </div>
+
+  <div class="section">
+    <h2>Step 4: Known Chute Repos</h2>
+    <p>If Chute has multiple repos, test each one:</p>
+    <div id="knownRepos"></div>
+  </div>
+
+  <script>
+    function checkDevActivity() {
+      const output = document.getElementById('devOutput');
+      try {
+        const cached = localStorage.getItem('gem_dev_activity');
+        if (!cached) {
+          output.innerHTML = '<span class="error">No dev activity cache found. Run Gem Scanner first.</span>';
+          return;
+        }
+
+        const data = JSON.parse(cached);
+        const entries = Object.entries(data.data || {});
+
+        // Search for chute (case insensitive)
+        const chuteEntries = entries.filter(([netuid, d]) =>
+          d.repoUrl?.toLowerCase().includes('chute') ||
+          JSON.stringify(d).toLowerCase().includes('chute')
+        );
+
+        if (chuteEntries.length === 0) {
+          output.innerHTML = '<span class="warning">No "chute" entries found in dev activity cache.</span>\n\n';
+          output.innerHTML += '<span class="success">Showing ALL repos with GitHub URLs:</span>\n\n';
+          const withRepos = entries.filter(([_, d]) => d.repoUrl);
+          withRepos.forEach(([netuid, d]) => {
+            output.innerHTML += `SN${netuid}: ${d.repoUrl}\n  7d commits: ${d.commits7d}\n\n`;
+          });
+        } else {
+          output.innerHTML = '<span class="success">Found Chute entries:</span>\n\n';
+          chuteEntries.forEach(([netuid, d]) => {
+            output.innerHTML += `<strong>SUBNET ${netuid}:</strong>\n`;
+            output.innerHTML += `  Repo URL: ${d.repoUrl || 'NONE'}\n`;
+            output.innerHTML += `  7d commits: ${d.commits7d}\n`;
+            output.innerHTML += `  Contributors: ${d.uniqueContributors7d}\n`;
+            output.innerHTML += `  PRs merged: ${d.prsMerged7d}\n`;
+            output.innerHTML += `  Last event: ${d.daysSinceLastEvent} days ago\n\n`;
+          });
+        }
+      } catch (e) {
+        output.innerHTML = `<span class="error">Error: ${e.message}</span>`;
+      }
+    }
+
+    function checkRepoCache() {
+      const output = document.getElementById('repoOutput');
+      try {
+        const keys = Object.keys(localStorage).filter(k => k.startsWith('code_repo_'));
+
+        if (keys.length === 0) {
+          output.innerHTML = '<span class="error">No GitHub repo cache found. Run Gem Scanner first.</span>';
+          return;
+        }
+
+        output.innerHTML = '<span class="success">Cached GitHub repos:</span>\n\n';
+
+        keys.forEach(key => {
+          const repoPath = key.replace('code_repo_', '');
+          const data = JSON.parse(localStorage.getItem(key));
+
+          if (repoPath.toLowerCase().includes('chute')) {
+            output.innerHTML += `<strong class="warning">🎯 ${repoPath}</strong>\n`;
+          } else {
+            output.innerHTML += `${repoPath}\n`;
+          }
+
+          output.innerHTML += `  Code files: ${data.data.codeFileCount}\n`;
+          output.innerHTML += `  Test files: ${data.data.testFileCount}\n`;
+          output.innerHTML += `  Has CI: ${data.data.hasCI}\n`;
+          output.innerHTML += `  Has tests: ${data.data.hasTests}\n`;
+          output.innerHTML += `  Has docs: ${data.data.hasDocsFolder}\n`;
+          output.innerHTML += `  Has lockfile: ${data.data.hasLockfile}\n`;
+          output.innerHTML += `  Cached: ${new Date(data.ts).toLocaleString()}\n\n`;
+        });
+      } catch (e) {
+        output.innerHTML = `<span class="error">Error: ${e.message}</span>`;
+      }
+    }
+
+    async function fetchGitHub() {
+      const output = document.getElementById('githubOutput');
+      const url = document.getElementById('githubUrl').value.trim();
+
+      if (!url) {
+        output.innerHTML = '<span class="error">Please enter a GitHub URL</span>';
+        return;
+      }
+
+      output.innerHTML = '<span class="warning">Fetching...</span>';
+
+      try {
+        // Parse owner/repo
+        const match = url.match(/github\.com\/([^/]+)\/([^/\s#?]+)/);
+        if (!match) {
+          output.innerHTML = '<span class="error">Invalid GitHub URL</span>';
+          return;
+        }
+
+        const [_, owner, repo] = match;
+        const cleanRepo = repo.replace(/\.git$/, '');
+
+        // Fetch repo metadata
+        const repoRes = await fetch(`https://api.github.com/repos/${owner}/${cleanRepo}`);
+        if (!repoRes.ok) {
+          output.innerHTML = `<span class="error">GitHub API error: ${repoRes.status} ${repoRes.statusText}</span>`;
+          return;
+        }
+        const repoData = await repoRes.json();
+
+        // Fetch file tree
+        const defaultBranch = repoData.default_branch || 'main';
+        const treeRes = await fetch(`https://api.github.com/repos/${owner}/${cleanRepo}/git/trees/${defaultBranch}?recursive=1`);
+        let tree = [];
+        if (treeRes.ok) {
+          const treeData = await treeRes.json();
+          tree = (treeData.tree || []).filter(t => t.type === 'blob').map(t => t.path);
+        }
+
+        // Analyze
+        const analysis = analyzeRepo(repoData, tree);
+
+        output.innerHTML = '<span class="success">✅ Analysis Complete:</span>\n\n';
+        output.innerHTML += `Repo: ${owner}/${cleanRepo}\n`;
+        output.innerHTML += `Stars: ${analysis.stars}\n`;
+        output.innerHTML += `Language: ${analysis.language}\n`;
+        output.innerHTML += `Total files: ${analysis.totalFiles}\n`;
+        output.innerHTML += `Code files: ${analysis.codeFileCount}\n`;
+        output.innerHTML += `Test files: ${analysis.testFileCount}\n`;
+        output.innerHTML += `Has tests: ${analysis.hasTests}\n`;
+        output.innerHTML += `Has CI: ${analysis.hasCI}\n`;
+        output.innerHTML += `Has docs folder: ${analysis.hasDocsFolder}\n`;
+        output.innerHTML += `Has README: ${analysis.hasReadme}\n`;
+        output.innerHTML += `Has lockfile: ${analysis.hasLockfile}\n`;
+        output.innerHTML += `Has requirements: ${analysis.hasRequirements}\n`;
+        output.innerHTML += `Has Bittensor imports: ${analysis.hasBittensorImport}\n`;
+        output.innerHTML += `Has validator code: ${analysis.hasValidatorCode}\n`;
+        output.innerHTML += `Has miner code: ${analysis.hasMinerCode}\n`;
+        output.innerHTML += `\n<span class="warning">⚠️ Engineering Score Estimate:</span>\n`;
+        output.innerHTML += `Testing: ${analysis.hasTests ? '> 0' : '0.0'}\n`;
+        output.innerHTML += `Security: ${analysis.hasGitignore ? '> 5' : '0.0'}\n`;
+        output.innerHTML += `Dependency: ${analysis.hasLockfile ? '> 4' : '0.0'}\n`;
+        output.innerHTML += `Documentation: ${analysis.hasReadme ? '> 3' : '0.0'}\n`;
+
+      } catch (e) {
+        output.innerHTML = `<span class="error">Error: ${e.message}</span>`;
+      }
+    }
+
+    function analyzeRepo(repoData, tree) {
+      const lowerPaths = tree.map(p => p.toLowerCase());
+
+      // Test detection
+      const testPatterns = [/^tests?\//, /__tests__\//, /_test\.(py|go|rs|js|ts)$/, /\.test\.(js|ts|jsx|tsx)$/, /\.spec\.(js|ts|jsx|tsx)$/, /test_.*\.py$/];
+      const testFiles = lowerPaths.filter(p => testPatterns.some(rx => rx.test(p)));
+
+      // CI detection
+      const ciPatterns = [/^\.github\/workflows\//, /^\.circleci\//, /^jenkinsfile$/i, /^\.gitlab-ci\.yml$/, /^\.travis\.yml$/];
+      const hasCI = lowerPaths.some(p => ciPatterns.some(rx => rx.test(p)));
+
+      // Docs
+      const hasDocsFolder = lowerPaths.some(p => p.startsWith('docs/'));
+      const hasReadme = lowerPaths.some(p => p === 'readme.md' || p === 'readme.rst');
+
+      // Security
+      const hasGitignore = lowerPaths.some(p => p === '.gitignore');
+
+      // Dependencies
+      const lockfiles = ['poetry.lock', 'package-lock.json', 'yarn.lock', 'cargo.lock', 'go.sum'];
+      const hasLockfile = lowerPaths.some(p => lockfiles.some(lf => p.endsWith(lf)));
+      const reqFiles = ['requirements.txt', 'pyproject.toml', 'cargo.toml', 'package.json'];
+      const hasRequirements = lowerPaths.some(p => reqFiles.some(rf => p.endsWith(rf)));
+
+      // Code files
+      const codeExts = /\.(py|js|ts|jsx|tsx|rs|go|sol|java|cpp|c|h|rb)$/;
+      const codeFiles = lowerPaths.filter(p => codeExts.test(p));
+
+      // Bittensor
+      const btPatterns = ['bittensor', 'subtensor', 'metagraph', 'neuron'];
+      const hasBittensorImport = lowerPaths.some(p => btPatterns.some(kw => p.includes(kw)));
+
+      const hasValidatorCode = lowerPaths.some(p => p.includes('validator') || p.includes('vali'));
+      const hasMinerCode = lowerPaths.some(p => p.includes('miner'));
+
+      return {
+        stars: repoData.stargazers_count || 0,
+        language: repoData.language || null,
+        totalFiles: tree.length,
+        codeFileCount: codeFiles.length,
+        hasTests: testFiles.length > 0,
+        testFileCount: testFiles.length,
+        hasCI,
+        hasDocsFolder,
+        hasReadme,
+        hasGitignore,
+        hasLockfile,
+        hasRequirements,
+        hasBittensorImport,
+        hasValidatorCode,
+        hasMinerCode,
+      };
+    }
+
+    // List known Chute repos
+    window.onload = function() {
+      const knownDiv = document.getElementById('knownRepos');
+      const possibleRepos = [
+        'https://github.com/chuteai/chute',
+        'https://github.com/chute-ai/chute',
+        'https://github.com/chuteai/chute-protocol',
+        'https://github.com/chuteai/chute-validator',
+        'https://github.com/chuteai/chute-miner',
+      ];
+
+      possibleRepos.forEach(url => {
+        const btn = document.createElement('button');
+        btn.textContent = url;
+        btn.onclick = () => {
+          document.getElementById('githubUrl').value = url;
+          fetchGitHub();
+        };
+        knownDiv.appendChild(btn);
+      });
+    };
+  </script>
+</body>
+</html>
