@@ -3,7 +3,7 @@ import { useSharedData } from "./DataContext.jsx";
 import { fetchDevActivity } from "./gem/api.js";
 import { scoreGems } from "./gem/scoring.js";
 import { GEM_TIER_CONFIG, QUADRANTS, SIGNAL_LINES } from "./gem/constants.js";
-import { fetchAllRepoData } from "./code/api.js";
+import { fetchAllRepoData } from "./code/api-enhanced.js";
 import { scoreCode } from "./code/scoring.js";
 import { DIMENSIONS, PILLARS, CODE_TIERS, getTier, getTierColor } from "./code/constants.js";
 
