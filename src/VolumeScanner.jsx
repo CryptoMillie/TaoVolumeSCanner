@@ -22,6 +22,8 @@ export default function VolumeScanner() {
   const [auto, setAuto] = useState(true);
   const [freq, setFreq] = useState(60);
   const [filter, setFilter] = useState("all");
+  const [sortCol, setSortCol] = useState("vmp");
+  const [sortAsc, setSortAsc] = useState(false);
   const [spikeLog, setSpikeLog] = useState([]);
   const prevRef = useRef({});
   const timerRef = useRef();
@@ -80,12 +82,20 @@ export default function VolumeScanner() {
     return () => clearInterval(timerRef.current);
   }, [auto, freq, scan]);
 
+  const toggleSort = (col) => {
+    if (sortCol === col) setSortAsc(!sortAsc);
+    else { setSortCol(col); setSortAsc(false); }
+  };
+
   const display = rows.filter(s =>
     filter === "all" ? true :
     filter === "critical" ? s.lv === "critical" :
     filter === "high" ? s.lv === "critical" || s.lv === "high" :
     s.lv !== "low"
-  );
+  ).sort((a, b) => {
+    const av = a[sortCol] ?? 0, bv = b[sortCol] ?? 0;
+    return sortAsc ? av - bv : bv - av;
+  });
 
   const counts = { critical: rows.filter(s=>s.lv==="critical").length, high: rows.filter(s=>s.lv==="high").length, medium: rows.filter(s=>s.lv==="medium").length, low: rows.filter(s=>s.lv==="low").length };
 
@@ -105,8 +115,9 @@ export default function VolumeScanner() {
     spikePill: (crit) => ({ background:crit?"#ff000f12":"#ff660010", border:`1px solid ${crit?"#ff003330":"#ff660025"}`, color:crit?"#ff4455":"#ff8833", padding:"2px 8px", borderRadius:"3px", fontSize:"10px" }),
     statsBar: { padding:"6px 18px", display:"flex", gap:"14px", borderBottom:"1px solid #0d0d1e", fontSize:"10px", color:"#222244" },
     thead: { background:"#0a0a14", borderBottom:"1px solid #131326" },
-    th: { padding:"6px 8px", fontWeight:400, fontSize:"10px", color:"#282844", letterSpacing:"0.1em", textAlign:"right" },
+    th: { padding:"6px 8px", fontWeight:400, fontSize:"10px", color:"#282844", letterSpacing:"0.1em", textAlign:"right", cursor:"pointer", userSelect:"none" },
     thLeft: { padding:"6px 8px", fontWeight:400, fontSize:"10px", color:"#282844", letterSpacing:"0.1em", textAlign:"left" },
+    thActive: { color:"#5555ff" },
     cell: { padding:"8px 8px", textAlign:"right" },
     cellLeft: { padding:"8px 8px", textAlign:"left" },
   };
@@ -200,13 +211,13 @@ export default function VolumeScanner() {
               <tr style={S.thead}>
                 <th style={{...S.thLeft, width:"90px"}}>LEVEL</th>
                 <th style={{...S.thLeft}}>SUBNET</th>
-                <th style={{...S.th, width:"72px"}}>PRICE</th>
-                <th style={{...S.th, width:"72px"}}>MKT CAP</th>
-                <th style={{...S.th, width:"72px"}}>VOLUME</th>
-                <th style={{...S.th, width:"58px", color:"#555577"}}>VOL/MC</th>
-                <th style={{...S.th, width:"56px"}}>24H</th>
-                <th style={{...S.th, width:"56px"}}>7D</th>
-                <th style={{...S.th, width:"68px"}}>ATH DISC</th>
+                <th style={{...S.th, width:"72px", ...(sortCol==="current_price"?S.thActive:{})}} onClick={()=>toggleSort("current_price")}>PRICE {sortCol==="current_price"?(sortAsc?"\u25B2":"\u25BC"):""}</th>
+                <th style={{...S.th, width:"72px", ...(sortCol==="mc"?S.thActive:{})}} onClick={()=>toggleSort("mc")}>MKT CAP {sortCol==="mc"?(sortAsc?"\u25B2":"\u25BC"):""}</th>
+                <th style={{...S.th, width:"72px", ...(sortCol==="total_volume"?S.thActive:{})}} onClick={()=>toggleSort("total_volume")}>VOLUME {sortCol==="total_volume"?(sortAsc?"\u25B2":"\u25BC"):""}</th>
+                <th style={{...S.th, width:"58px", color:sortCol==="vmp"?"#5555ff":"#555577"}} onClick={()=>toggleSort("vmp")}>VOL/MC {sortCol==="vmp"?(sortAsc?"\u25B2":"\u25BC"):""}</th>
+                <th style={{...S.th, width:"56px", ...(sortCol==="c24"?S.thActive:{})}} onClick={()=>toggleSort("c24")}>24H {sortCol==="c24"?(sortAsc?"\u25B2":"\u25BC"):""}</th>
+                <th style={{...S.th, width:"56px", ...(sortCol==="c7"?S.thActive:{})}} onClick={()=>toggleSort("c7")}>7D {sortCol==="c7"?(sortAsc?"\u25B2":"\u25BC"):""}</th>
+                <th style={{...S.th, width:"68px", ...(sortCol==="ath_change_percentage"?S.thActive:{})}} onClick={()=>toggleSort("ath_change_percentage")}>ATH DISC {sortCol==="ath_change_percentage"?(sortAsc?"\u25B2":"\u25BC"):""}</th>
               </tr>
             </thead>
             <tbody>
