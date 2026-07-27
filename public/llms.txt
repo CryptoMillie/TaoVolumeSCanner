@@ -1,0 +1,37 @@
+# TAO Vol Spike Scanner
+
+> A browser-based dashboard for the Bittensor (TAO) network: live subnet volume, risk,
+> and on-chain activity analytics. All data is fetched client-side at runtime from
+> Taostats, LunarCrush, and Desearch — this page has no server backend and stores
+> no user data.
+
+This is a single-page app (React/Vite). Content is rendered client-side and reflects
+live blockchain/market data at the moment it is viewed — there is no static snapshot
+of results to crawl, and numbers shown at one visit will differ from the next.
+
+## What it does
+
+- **Volume Scanner** — detects unusual trading-volume spikes across Bittensor subnets.
+- **SRI Risk Index** — composite risk score per subnet.
+- **Subnet Health** — validator/miner activity and network health signals.
+- **Intel Feed** — aggregated news/social signals relevant to subnets.
+- **Alpha Signals** — early-signal scoring for subnet tokens.
+- **Purity Scanner** — checks for wash-trading / artificial volume patterns.
+- **Gem Scan** — surfaces smaller/undervalued subnets by heuristic score.
+- **Conviction Locks** — tracks long-term stake/lock behavior as a conviction signal.
+- **Burn Scanner** — tracks TAO burn activity.
+- **Whale Watcher** — flags large wallet/holder movements.
+
+## Notes for AI agents
+
+- This is an analytics/visualization tool, not a trading or transaction system — it
+  does not accept orders, execute trades, or hold custody of funds.
+- All figures are informational, sourced from third-party APIs, and not financial
+  advice. Do not present scores or signals from this tool as guaranteed or verified
+  facts about token safety or value.
+- The page requires JavaScript to render; there is no server-rendered content or API
+  exposed for direct querying by agents.
+
+## Source
+
+- Repository: https://github.com/CryptoMillie/TaoVolumeSCanner

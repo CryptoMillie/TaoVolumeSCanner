@@ -4,10 +4,31 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Live Bittensor (TAO) subnet analytics: volume spikes, risk index, subnet health, alpha signals, wash-trading detection, whale tracking, and more. Client-side dashboard, no account required." />
+    <meta name="robots" content="index, follow" />
+    <meta property="og:title" content="TAO Vol Spike Scanner" />
+    <meta property="og:description" content="Live Bittensor (TAO) subnet volume, risk, and on-chain analytics dashboard." />
+    <meta property="og:type" content="website" />
     <title>TAO Vol Spike Scanner</title>
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <div style="font-family: monospace; max-width: 640px; margin: 40px auto; padding: 0 16px; color: #222;">
+        <h1>TAO Vol Spike Scanner</h1>
+        <p>
+          A live dashboard for Bittensor (TAO) subnet analytics: volume spikes, an SRI
+          risk index, subnet health, alpha signals, wash-trading (purity) checks, burn
+          tracking, and whale-wallet monitoring.
+        </p>
+        <p>
+          This app renders client-side with JavaScript and fetches live data at request
+          time, so this page cannot display real-time figures without a JS-capable
+          browser. See <a href="/llms.txt">/llms.txt</a> for a machine-readable summary,
+          or the <a href="https://github.com/CryptoMillie/TaoVolumeSCanner">source repository</a>.
+        </p>
+      </div>
+    </noscript>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
