@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useSharedData } from "./DataContext.jsx";
+import { useGateConfig } from "./lib/GateConfigContext.jsx";
 import { scoreInstitutional } from "./intel/scoring.js";
 import { detectSpikes, getTopMovers } from "./intel/news.js";
 import { INST_TIER_CONFIG, INST_DIMENSION_LABELS, TOP_MOVERS_COUNT } from "./intel/constants.js";
@@ -94,6 +95,7 @@ function NewsFeedCard({ mover }) {
 
 export default function IntelScanner() {
   const { refreshAll, taoStats, coinGecko } = useSharedData();
+  const { q, h } = useGateConfig();
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
   const [ts, setTs] = useState(null);
@@ -148,7 +150,7 @@ export default function IntelScanner() {
       setMovers(topMovers);
 
       // Institutional scores
-      const instScores = scoreInstitutional(sriData.subnets, sriData.pools, sriData.meta);
+      const instScores = scoreInstitutional(sriData.subnets, sriData.pools, sriData.meta, { q, h });
       setScores(instScores);
 
       setTs(new Date());
@@ -156,9 +158,9 @@ export default function IntelScanner() {
       setErr(e.message);
     }
     setLoading(false);
-  }, []);
+  }, [refreshAll, q, h]);
 
-  useEffect(() => { scan(); }, []);
+  useEffect(() => { scan(); }, [scan]);
 
   const sortedScores = [...scores].sort((a, b) => {
     let aVal, bVal;
@@ -263,6 +265,7 @@ export default function IntelScanner() {
                   <th style={S.th} onClick={() => toggleSort("PMF")}>
                     PMF {sortBy === "PMF" ? (sortDir === "desc" ? "\u25BC" : "\u25B2") : ""}
                   </th>
+                  <th style={S.th} title="v440 gate: position relative to theta (the bar). REV's rev_2 sub-metric is derived from this, not raw emission share.">r (BAR)</th>
                 </tr>
               </thead>
               <tbody>
@@ -296,6 +299,9 @@ export default function IntelScanner() {
                       <td style={S.cell}>
                         <DimensionBar value={s.dimensions.PMF} color="#dd44ff" />
                         <span style={{ color: "#555577", fontSize: "10px", marginLeft: "6px" }}>{s.dimensions.PMF.toFixed(0)}</span>
+                      </td>
+                      <td style={{ ...S.cell, color: s.gateRatio == null ? "#333355" : s.gateRatio >= 1 ? "#33bb66" : s.gateRatio >= 0.8 ? "#ddaa00" : "#ff6644", fontWeight: 600 }}>
+                        {s.gateRatio != null ? `${s.gateRatio.toFixed(2)}×` : "—"}
                       </td>
                     </tr>
                   );

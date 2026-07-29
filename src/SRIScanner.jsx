@@ -1,9 +1,15 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useSharedData } from "./DataContext.jsx";
+import { useGateConfig } from "./lib/GateConfigContext.jsx";
 import { fetchMechDataMap } from "./sri/api.js";
 import { scoreSubnets } from "./sri/scoring.js";
 import { evaluateFlags } from "./sri/flags.js";
 import { DIMENSION_LABELS, TIER_CONFIG, FLAG_LABELS, FLAG_CONFIG, RAO_PER_TAO } from "./sri/constants.js";
+
+function gateRatioColor(r) {
+  if (r == null) return "#333355";
+  return r >= 1 ? "#33bb66" : r >= 0.8 ? "#ddaa00" : "#ff6644";
+}
 
 const BLOCKS_PER_DAY = 7200;
 
@@ -110,7 +116,7 @@ function ExpandedRow({ item, flags }) {
   if (!item.dimensions) {
     return (
       <tr>
-        <td colSpan={12} style={{ padding: "0" }}>
+        <td colSpan={13} style={{ padding: "0" }}>
           <div style={{ padding: "12px 18px 12px 40px", background: "#0a0a14", borderBottom: "1px solid #131326", color: "#333355", fontSize: "10px" }}>
             No scoring data — subnet has zero emissions.
           </div>
@@ -120,7 +126,7 @@ function ExpandedRow({ item, flags }) {
   }
   return (
     <tr>
-      <td colSpan={12} style={{ padding: "0" }}>
+      <td colSpan={13} style={{ padding: "0" }}>
         <div style={{ padding: "12px 18px 12px 40px", background: "#0a0a14", borderBottom: "1px solid #131326" }}>
           <div style={{ display: "flex", gap: "28px", flexWrap: "wrap" }}>
             {Object.entries(DIMENSION_LABELS).map(([key, label]) => {
@@ -171,6 +177,14 @@ function ExpandedRow({ item, flags }) {
               </div>
             );
           })()}
+          {item.gateRatio != null && (
+            <div style={{ marginTop: "10px", display: "flex", gap: "24px", alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ color: "#282844", fontSize: "9px", letterSpacing: "0.1em" }}>V440 GATE:</span>
+              <span style={{ color: gateRatioColor(item.gateRatio), fontSize: "10px" }}>r = <span style={{ fontWeight: 600 }}>{item.gateRatio.toFixed(2)}×</span> the bar</span>
+              <span style={{ color: "#7777aa", fontSize: "10px" }}>gate keeps <span style={{ fontWeight: 600 }}>{(item.gatePct * 100).toFixed(0)}%</span></span>
+              <span style={{ color: "#7777aa", fontSize: "10px" }}>elasticity <span style={{ fontWeight: 600 }}>{item.gateElasticity.toFixed(2)}×</span> — 10% demand growth ≈ +{((Math.pow(1.1, item.gateElasticity) - 1) * 100).toFixed(0)}% emission</span>
+            </div>
+          )}
         </div>
       </td>
     </tr>
@@ -262,6 +276,7 @@ function MethodologySection() {
 
 export default function SRIScanner() {
   const { refreshTaoStats } = useSharedData();
+  const { q, h } = useGateConfig();
   const [scored, setScored] = useState([]);
   const [unscored, setUnscored] = useState([]);
   const [flagMap, setFlagMap] = useState({});
@@ -276,7 +291,7 @@ export default function SRIScanner() {
     try {
       const { subnets, pools, meta } = await refreshTaoStats();
       const mechDataMap = await fetchMechDataMap(subnets);
-      const { scored: s, unscored: u } = scoreSubnets(subnets, pools, meta, mechDataMap);
+      const { scored: s, unscored: u } = scoreSubnets(subnets, pools, meta, mechDataMap, { q, h });
       const flags = evaluateFlags(s);
       // Also evaluate flags for unscored subnets
       const allForFlags = [...s, ...u];
@@ -289,9 +304,9 @@ export default function SRIScanner() {
       setErr(e.message);
     }
     setLoading(false);
-  }, []);
+  }, [refreshTaoStats, q, h]);
 
-  useEffect(() => { scan(); }, []);
+  useEffect(() => { scan(); }, [scan]);
 
   const toggleExpand = (netuid) => {
     setExpanded(prev => ({ ...prev, [netuid]: !prev[netuid] }));
@@ -353,9 +368,11 @@ export default function SRIScanner() {
               <td style={S.cell}><DimensionBar value={s.dimensions.D2} color={TIER_CONFIG[s.dimensions.D2 >= 70 ? "green" : s.dimensions.D2 >= 40 ? "amber" : "red"].color} /></td>
               <td style={S.cell}><DimensionBar value={s.dimensions.D3} color={TIER_CONFIG[s.dimensions.D3 >= 70 ? "green" : s.dimensions.D3 >= 40 ? "amber" : "red"].color} /></td>
               <td style={S.cell}><DimensionBar value={s.dimensions.D4} color={TIER_CONFIG[s.dimensions.D4 >= 70 ? "green" : s.dimensions.D4 >= 40 ? "amber" : "red"].color} /></td>
+              <td style={{ ...S.cell, color: gateRatioColor(s.gateRatio), fontWeight: 600 }}>{s.gateRatio != null ? `${s.gateRatio.toFixed(2)}\u00d7` : "\u2014"}</td>
             </>
           ) : (
             <>
+              <td style={S.cell}><span style={{ color: "#1a1a2e", fontSize: "10px" }}>{"\u2014"}</span></td>
               <td style={S.cell}><span style={{ color: "#1a1a2e", fontSize: "10px" }}>{"\u2014"}</span></td>
               <td style={S.cell}><span style={{ color: "#1a1a2e", fontSize: "10px" }}>{"\u2014"}</span></td>
               <td style={S.cell}><span style={{ color: "#1a1a2e", fontSize: "10px" }}>{"\u2014"}</span></td>
@@ -444,6 +461,7 @@ export default function SRIScanner() {
                 <th style={{ ...S.th, width: "70px" }}>D2 MKT</th>
                 <th style={{ ...S.th, width: "70px" }}>D3 ECON</th>
                 <th style={{ ...S.th, width: "70px" }}>D4 GOV</th>
+                <th style={{ ...S.th, width: "56px" }}>r (BAR)</th>
                 <th style={{ ...S.th, width: "68px" }}>EMISSION</th>
                 <th style={{ ...S.th, width: "68px" }}>INJECTED</th>
                 <th style={{ ...S.th, width: "68px" }}>CHAIN BUY</th>
@@ -454,7 +472,7 @@ export default function SRIScanner() {
               {scored.map((s, i) => renderRow(s, i, false))}
               {unscored.length > 0 && (
                 <tr>
-                  <td colSpan={12} style={{ padding: "6px 18px", background: "#08080e", borderBottom: "1px solid #0e0e18", color: "#222244", fontSize: "9px", letterSpacing: "0.1em" }}>
+                  <td colSpan={13} style={{ padding: "6px 18px", background: "#08080e", borderBottom: "1px solid #0e0e18", color: "#222244", fontSize: "9px", letterSpacing: "0.1em" }}>
                     INACTIVE SUBNETS (ZERO EMISSION)
                   </td>
                 </tr>

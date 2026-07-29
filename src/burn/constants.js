@@ -64,7 +64,9 @@ export const TOOLTIPS = {
   burned30d: "Total alpha derived as burned over the last 30 days. Calculated as expected emission minus actual pool alpha change.",
   taoValue: "Estimated TAO value of the burned alpha, based on current pool price.",
   burnDays: "Number of days (out of 30) where the actual alpha change was less than expected emission, indicating manual burns occurred.",
-  incentiveBurn: "The miner_burn rate (incentive_burn). Under v3.4.6, this directly reduces chain-level emission via (1 - miner_burn). A 50% burn rate means the subnet receives only 50% of its potential chain emission.",
-  emissionRetention: "Chain emission retention = (1 - miner_burn). Shows what fraction of potential chain emission this subnet actually receives. 100% = full emission, 0% = zero emission.",
+  incentiveBurn: "The miner_burn rate (incentive_burn). Under v440 this weights demand via (1 - miner_burn) BEFORE the emission gate is applied — it is an input, not the final retained fraction. See POST-GATE for what burning actually costs at this subnet's current position.",
+  emissionRetention: "Pre-gate input only: (1 - miner_burn), the demand-weighting factor. This is NOT the fraction of chain emission actually received — under v440 that number is gated (convex), see POST-GATE. A subnet deep below the bar loses far less from burning than this number implies; a subnet near the bar can lose far more.",
+  postGateShare: "This subnet's actual emission share after the v440 gate is applied — the real-world consequence of its current demand (price × (1-burn)) relative to theta (the bar). This is what emissionRetention used to approximate pre-v440.",
+  burnEmissionImpact: "Approximate emission share this subnet is sacrificing by burning at its current rate, given its position relative to the bar (elasticity × the relative demand this burn removes). A linearized estimate, not an exact re-run of the gate with burn=0.",
   status: "Heavy (\u226550% burned) = severe emission penalty. Moderate (20-50%) = meaningful reduction. Light (5-20%) = minor impact. Minimal (<5%) = negligible.",
 };

@@ -1,6 +1,14 @@
 // Purity Scoring Engine — Detects coordinated pump-and-dump vs organic staking patterns
 // Post v3.4.6: TaoFlow EMA cycling exploit is dead (price-based emission is symmetric).
 // Flow pattern analysis remains valuable for detecting manufactured demand.
+//
+// v440: Signal 1 (emission share vs pool size) now uses the GATED share, not
+// raw emission/totalEmission — see src/lib/gate.js. The gate itself already
+// crushes a lot of what Signal 1 used to catch for deep-tail subnets (a
+// small pool manufacturing demand now gets a convexly suppressed share), so
+// Signal 1 is most informative for subnets sitting just above the bar where
+// a pool/emission mismatch still has outsized effect. `gateRatio` is exposed
+// on each row so the UI can show that context.
 
 import {
   SIGNAL_WEIGHTS,
@@ -10,6 +18,7 @@ import {
   FLOW_TREND,
   RAO_PER_TAO,
 } from "./constants.js";
+import { GATE_DEFAULTS, applyGate, demandFromPriceAndBurn } from "../lib/gate.js";
 
 function num(v) {
   if (v == null) return 0;
@@ -115,7 +124,7 @@ function estimateAgeDays(subnet) {
  * @param {object} meta - GitHub subnet metadata
  * @param {object} coldkeyMap - Map of netuid -> { uniqueColdkeys, totalCount, entries[] }
  */
-export function scorePurity(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}) {
+export function scorePurity(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}, gateConfig = GATE_DEFAULTS) {
   const subnets = Array.isArray(subnetsRaw) ? subnetsRaw : (subnetsRaw?.data || []);
   const pools = Array.isArray(poolsRaw) ? poolsRaw : (poolsRaw?.data || []);
 
@@ -129,14 +138,26 @@ export function scorePurity(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}) {
   const activeSubnets = subnets.filter(s => num(s.emission) > 0);
   if (activeSubnets.length === 0) return [];
 
-  const totalEmission = activeSubnets.reduce((sum, s) => sum + num(s.emission), 0);
+  // v440 gate pass (taostats-proxy demand — see The Bar tab for the
+  // verified on-chain source + reconciliation).
+  const demandRows = activeSubnets.map(s => {
+    const netuid = s.netuid ?? s.subnet_id;
+    const pool = poolMap[netuid] || null;
+    const price = pool ? num(pool.price || pool.alpha_price) : 0;
+    const burn = num(s.incentive_burn);
+    return { netuid, demand: demandFromPriceAndBurn(price, burn), emissionEnabled: true };
+  });
+  const gated = applyGate(demandRows, gateConfig);
+  const gateByNetuid = {};
+  gated.forEach(g => { gateByNetuid[g.netuid] = g; });
 
   // Extract raw signals for each subnet
   const items = activeSubnets.map(s => {
     const netuid = s.netuid ?? s.subnet_id;
     const pool = poolMap[netuid] || null;
     const poolTao = pool ? toTao(pool.total_tao) : 0;
-    const emissionSharePct = totalEmission > 0 ? (num(s.emission) / totalEmission) * 100 : 0;
+    const gate = gateByNetuid[netuid];
+    const emissionSharePct = gate.share * 100; // gated share, not raw emission/totalEmission
     const netFlow7d = num(s.net_flow_7_days);
     const netFlow30d = num(s.net_flow_30_days);
     const ageDays = estimateAgeDays(s);
@@ -192,6 +213,8 @@ export function scorePurity(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}) {
       s3_totalCount,
       s4_ageScore,
       trend: flowTrend(netFlow7d, poolTao),
+      gateRatio: gate.ratio,
+      gateElasticity: gate.elasticity,
     };
   });
 
@@ -264,9 +287,9 @@ export function scorePurity(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}) {
     const signals = [];
 
     if (s1_pct < 30) {
-      signals.push(`Emission share (${it.emissionSharePct.toFixed(2)}%) is disproportionately high for pool size (${it.poolTao.toFixed(0)} TAO). Small pool capturing outsized rewards.`);
+      signals.push(`Emission share (${it.emissionSharePct.toFixed(2)}%, r=${it.gateRatio.toFixed(2)}× the v440 bar) is disproportionately high for pool size (${it.poolTao.toFixed(0)} TAO). Small pool capturing outsized rewards${it.gateRatio > 1 ? " despite the gate — this subnet has cleared theta" : ""}.`);
     } else if (s1_pct < 50) {
-      signals.push(`Emission-to-pool ratio is elevated. Pool holds ${it.poolTao.toFixed(0)} TAO with ${it.emissionSharePct.toFixed(2)}% emission share.`);
+      signals.push(`Emission-to-pool ratio is elevated. Pool holds ${it.poolTao.toFixed(0)} TAO with ${it.emissionSharePct.toFixed(2)}% emission share (r=${it.gateRatio.toFixed(2)}×).`);
     }
 
     if (s2_pct < 30) {
@@ -331,6 +354,8 @@ export function scorePurity(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}) {
       marketCap: it.marketCap,
       netFlow7d: it.netFlow7d,
       netFlow30d: it.netFlow30d,
+      gateRatio: it.gateRatio,
+      gateElasticity: it.gateElasticity,
     };
   });
 

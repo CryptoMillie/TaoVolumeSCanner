@@ -641,7 +641,7 @@ export default function ConvictionScanner() {
 
           <div style={S.card("#66aaff")}>
             <div style={S.cardLabel}>
-              <Tooltip text={TOOLTIPS.gate}>10% Gate Pass</Tooltip>
+              <Tooltip text={TOOLTIPS.gate}>10% Lock Gate</Tooltip>
             </div>
             <div style={S.cardValue("#66aaff")}>
               <AnimCounter target={summary.gatePassCount} />
@@ -709,7 +709,7 @@ export default function ConvictionScanner() {
                 </th>
                 <th style={S.th} onClick={() => handleSort("gate")}>
                   <Tooltip text={TOOLTIPS.gate}>
-                    Gate{sortArrow("gate")}
+                    Lock Gate{sortArrow("gate")}
                   </Tooltip>
                 </th>
               </tr>
@@ -970,7 +970,7 @@ export default function ConvictionScanner() {
                                 </div>
                                 <div>
                                   <div style={{ color: "#66aaff", fontSize: "9px", fontWeight: 600 }}>
-                                    <Tooltip text={TOOLTIPS.gate}>10% GATE</Tooltip>
+                                    <Tooltip text={TOOLTIPS.gate}>10% LOCK GATE</Tooltip>
                                   </div>
                                   <div style={{
                                     color: row.buckets.gate ? "#33bb66" : "#ff4455",

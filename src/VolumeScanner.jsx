@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useSharedData } from "./DataContext.jsx";
+import { useGateConfig } from "./lib/GateConfigContext.jsx";
+import { applyGate, demandFromPriceAndBurn } from "./lib/gate.js";
 
 function lvl(v){ return v>=40?"critical":v>=20?"high":v>=10?"medium":"low"; }
 function fV(v){ return v>=1e6?`${(v/1e6).toFixed(2)}M`:v>=1e3?`${(v/1e3).toFixed(0)}K`:`${v.toFixed(0)}`; }
@@ -15,6 +17,7 @@ const LEVEL_CONFIG = {
 
 export default function VolumeScanner() {
   const { forceRefreshCoinGecko, refreshTaoStats } = useSharedData();
+  const { q, h } = useGateConfig();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
@@ -39,9 +42,16 @@ export default function VolumeScanner() {
       ]);
       const poolsRaw = tsData.pools;
       const metaRaw = tsData.meta;
+      const subnetsRaw = tsData.subnets;
 
       // Build name lookup: "sn44" -> best name from TaoStats pools + GitHub meta
       const pools = Array.isArray(poolsRaw) ? poolsRaw : (poolsRaw?.data || []);
+      const subnetArr = Array.isArray(subnetsRaw) ? subnetsRaw : (subnetsRaw?.data || []);
+      const poolMap = {};
+      pools.forEach(p => {
+        const id = p.netuid ?? p.subnet_id;
+        if (id != null) poolMap[id] = p;
+      });
       const nameMap = {};
       pools.forEach(p => {
         const id = p.netuid ?? p.subnet_id;
@@ -52,15 +62,44 @@ export default function VolumeScanner() {
         if (me?.name) nameMap[key] = me.name;
       });
 
+      // v440 gate pass (taostats-proxy demand — see The Bar tab for the
+      // verified on-chain source + reconciliation). Elasticity here turns a
+      // volume spike into a leading indicator: projected Δemission =
+      // (1 + Δdemand)^elasticity - 1, using the VMP spike as a Δdemand
+      // proxy — clearly a proxy, not a direct demand measurement.
+      const demandRows = subnetArr
+        .filter(s => (parseFloat(s.emission) || 0) > 0)
+        .map(s => {
+          const netuid = s.netuid ?? s.subnet_id;
+          const pool = poolMap[netuid];
+          const price = pool ? parseFloat(pool.price || pool.alpha_price || 0) : 0;
+          const burn = parseFloat(s.incentive_burn || 0);
+          return { netuid, demand: demandFromPriceAndBurn(price, burn), emissionEnabled: true };
+        });
+      const gated = applyGate(demandRows, { q, h });
+      const gateByNetuid = {};
+      gated.forEach(g => { gateByNetuid[g.netuid] = g; });
+
       const processed = raw.filter(s => s.total_volume > 0).map(s => {
         const mc = s.market_cap > 0 ? s.market_cap : (s.fully_diluted_valuation || 1);
         const vmp = (s.total_volume / mc) * 100;
         const prev = prevRef.current[s.symbol];
         const spike = prev ? ((s.total_volume - prev) / prev) * 100 : null;
+
+        // "sn{netuid}" is the CoinGecko symbol format for this category —
+        // join straight back to the gate map.
+        const netuidMatch = /^sn(\d+)$/i.exec(s.symbol || "");
+        const netuid = netuidMatch ? parseInt(netuidMatch[1], 10) : null;
+        const gate = netuid != null ? gateByNetuid[netuid] : null;
+        const projectedEmissionDelta = gate && spike != null
+          ? Math.pow(1 + spike / 100, gate.elasticity) - 1
+          : null;
+
         return { ...s, mc, vmp, lv: lvl(vmp), spike,
           label: nameMap[s.symbol] || s.name,
           c24: s.price_change_percentage_24h || 0,
-          c7: s.price_change_percentage_7d_in_currency || 0 };
+          c7: s.price_change_percentage_7d_in_currency || 0,
+          netuid, gateRatio: gate?.ratio ?? null, projectedEmissionDelta };
       }).sort((a, b) => b.vmp - a.vmp);
 
       const newSpikes = processed
@@ -73,9 +112,9 @@ export default function VolumeScanner() {
       setRows(processed); setTs(new Date());
     } catch(e) { setErr(e.message); }
     setLoading(false);
-  }, []);
+  }, [forceRefreshCoinGecko, refreshTaoStats, q, h]);
 
-  useEffect(() => { scan(); }, []);
+  useEffect(() => { scan(); }, [scan]);
   useEffect(() => {
     clearInterval(timerRef.current);
     if (auto) timerRef.current = setInterval(scan, freq * 1000);
@@ -215,6 +254,7 @@ export default function VolumeScanner() {
                 <th style={{...S.th, width:"72px", ...(sortCol==="mc"?S.thActive:{})}} onClick={()=>toggleSort("mc")}>MKT CAP {sortCol==="mc"?(sortAsc?"\u25B2":"\u25BC"):""}</th>
                 <th style={{...S.th, width:"72px", ...(sortCol==="total_volume"?S.thActive:{})}} onClick={()=>toggleSort("total_volume")}>VOLUME {sortCol==="total_volume"?(sortAsc?"\u25B2":"\u25BC"):""}</th>
                 <th style={{...S.th, width:"58px", color:sortCol==="vmp"?"#5555ff":"#555577"}} onClick={()=>toggleSort("vmp")}>VOL/MC {sortCol==="vmp"?(sortAsc?"\u25B2":"\u25BC"):""}</th>
+                <th style={{...S.th, width:"78px", ...(sortCol==="projectedEmissionDelta"?S.thActive:{})}} onClick={()=>toggleSort("projectedEmissionDelta")} title="Proxy leading indicator: (1 + volume spike%)^elasticity - 1, using this refresh's volume spike as a stand-in for demand change. Not the real gate output \u2014 see The Bar tab.">{"\u0394"} EMIT (proj) {sortCol==="projectedEmissionDelta"?(sortAsc?"\u25B2":"\u25BC"):""}</th>
                 <th style={{...S.th, width:"56px", ...(sortCol==="c24"?S.thActive:{})}} onClick={()=>toggleSort("c24")}>24H {sortCol==="c24"?(sortAsc?"\u25B2":"\u25BC"):""}</th>
                 <th style={{...S.th, width:"56px", ...(sortCol==="c7"?S.thActive:{})}} onClick={()=>toggleSort("c7")}>7D {sortCol==="c7"?(sortAsc?"\u25B2":"\u25BC"):""}</th>
                 <th style={{...S.th, width:"68px", ...(sortCol==="ath_change_percentage"?S.thActive:{})}} onClick={()=>toggleSort("ath_change_percentage")}>ATH DISC {sortCol==="ath_change_percentage"?(sortAsc?"\u25B2":"\u25BC"):""}</th>
@@ -253,6 +293,11 @@ export default function VolumeScanner() {
                     <td style={{...S.cell, color:s.lv==="critical"?"#ff4455":s.lv==="high"?"#ff8833":"#555577"}}>{fV(s.total_volume)}</td>
                     <td style={{...S.cell, color:cfg.text, fontWeight:s.lv==="critical"?700:s.lv==="high"?600:400, fontSize:s.lv==="critical"?"14px":"12px"}}>
                       {s.vmp.toFixed(0)}%
+                    </td>
+                    <td style={{...S.cell, color: s.projectedEmissionDelta==null?"#333355":s.projectedEmissionDelta>0?"#33bb66":s.projectedEmissionDelta<0?"#cc3333":"#666688"}}
+                      title={s.gateRatio!=null?`r=${s.gateRatio.toFixed(2)}× the bar`:""}
+                    >
+                      {s.projectedEmissionDelta==null ? "—" : fP(s.projectedEmissionDelta*100)}
                     </td>
                     <td style={{...S.cell, color:c24col}}>{fP(s.c24)}</td>
                     <td style={{...S.cell, color:c7col}}>{fP(s.c7)}</td>

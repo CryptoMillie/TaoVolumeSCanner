@@ -94,10 +94,14 @@ export const TOOLTIPS = {
   lockStatus: "Heavy (\u226520% of pool) = serious commitment. Moderate (5\u201320%) = meaningful. Light (<5%) = minimal skin in the game. No lock = exposed to emission blocking.",
   buckets: "Owner = subnet owner\u2019s own lock. To-Owner = other coldkeys supporting the owner\u2019s hotkey. Challenger = locks to non-owner hotkeys competing for kingship.",
   daysToKing: "Estimated days until the largest challenger\u2019s conviction overtakes the owner\u2019s total conviction (owner lock + supporter locks). Based on current conviction growth rates.",
-  gate: "Whether the combined owner-side conviction (owner + supporters) meets the 10% of alpha-out threshold for full emission flow.",
+  gate: "Whether the combined owner-side conviction (owner + supporters) meets the 10% of alpha-out threshold for full emission flow. This is the LOCK gate — an independent, ownership-based mechanism, NOT the v440 demand/theta gate (see The Bar tab). A subnet can pass this 10% lock gate and still sit well below theta, or fail it while sitting above theta — the two gates compound but do not interact.",
 };
 
-// 10% gate threshold — owner-side conviction must be >= 10% of alpha-out
+// 10% LOCK gate threshold — owner-side conviction must be >= 10% of alpha-out.
+// Independent of, and not to be confused with, the v440 demand/theta gate
+// (src/lib/gate.js, The Bar tab) — this one is about ownership commitment,
+// not demand relative to the network-wide bar. The two compound but neither
+// determines the other.
 export const GATE_THRESHOLD = 0.10;
 
 // Bucket config for 3-bucket conviction model (Owner / To-Owner / Challenger)

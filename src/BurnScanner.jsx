@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useSharedData } from "./DataContext.jsx";
+import { useGateConfig } from "./lib/GateConfigContext.jsx";
 import { scoreBurns, computeBurnSummary } from "./burn/scoring.js";
 import { BURN_STATUS_CONFIG, TOOLTIPS } from "./burn/constants.js";
 
@@ -251,6 +252,7 @@ const S = {
 
 export default function BurnScanner() {
   const { refreshTaoStats } = useSharedData();
+  const { q, h } = useGateConfig();
   const [data, setData] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -274,7 +276,7 @@ export default function BurnScanner() {
       const pools = tsData.pools;
       const subnets = tsData.subnets;
 
-      const scored = scoreBurns(subnets, pools, meta);
+      const scored = scoreBurns(subnets, pools, meta, { q, h });
       const stats = computeBurnSummary(scored);
 
       setData(scored);
@@ -285,11 +287,11 @@ export default function BurnScanner() {
     } finally {
       setLoading(false);
     }
-  }, [refreshTaoStats]);
+  }, [refreshTaoStats, q, h]);
 
   useEffect(() => {
     scan();
-  }, []);
+  }, [scan]);
 
   // Auto-refresh
   useEffect(() => {
@@ -321,11 +323,11 @@ export default function BurnScanner() {
 
   // Search
   if (search.trim()) {
-    const q = search.trim().toLowerCase();
+    const sq = search.trim().toLowerCase();
     filtered = filtered.filter(
       (d) =>
-        d.name?.toLowerCase().includes(q) ||
-        String(d.netuid).includes(q)
+        d.name?.toLowerCase().includes(sq) ||
+        String(d.netuid).includes(sq)
     );
   }
 
@@ -336,6 +338,7 @@ export default function BurnScanner() {
       case "netuid": av = a.netuid; bv = b.netuid; break;
       case "incentiveBurn": av = a.incentiveBurn; bv = b.incentiveBurn; break;
       case "emissionRetention": av = a.emissionRetention; bv = b.emissionRetention; break;
+      case "postGateShare": av = a.postGateShare ?? 0; bv = b.postGateShare ?? 0; break;
       case "recycledLifetime": av = a.recycledLifetime; bv = b.recycledLifetime; break;
       case "recycled24h": av = a.recycled24h; bv = b.recycled24h; break;
       case "estimated30dBurn": av = a.estimated30dBurn; bv = b.estimated30dBurn; break;
@@ -570,7 +573,12 @@ export default function BurnScanner() {
                 </th>
                 <th style={S.th} onClick={() => handleSort("emissionRetention")}>
                   <Tooltip text={TOOLTIPS.emissionRetention}>
-                    Chain Emit{sortArrow("emissionRetention")}
+                    Pre-Gate Input{sortArrow("emissionRetention")}
+                  </Tooltip>
+                </th>
+                <th style={S.th} onClick={() => handleSort("postGateShare")}>
+                  <Tooltip text={TOOLTIPS.postGateShare}>
+                    Post-Gate Share{sortArrow("postGateShare")}
                   </Tooltip>
                 </th>
                 <th style={S.th} onClick={() => handleSort("recycledLifetime")}>
@@ -685,9 +693,9 @@ export default function BurnScanner() {
                         )}
                       </td>
 
-                      {/* Chain Emission Retention */}
+                      {/* Pre-gate input: (1 - miner_burn), the demand-weighting factor — NOT what the subnet actually receives */}
                       <td style={{ ...S.td, fontWeight: 600 }}
-                        title={`This subnet receives ${fPct(row.emissionRetention)} of its potential chain emission. Miner burn of ${fPct(row.incentiveBurn)} reduces emission by the (1-b) term.`}
+                        title={`Pre-gate input only: demand is weighted by ${fPct(row.emissionRetention)} before the v440 gate is applied. This is NOT the fraction of emission actually received — see Post-Gate Share.`}
                       >
                         <span style={{
                           color: row.emissionRetention >= 0.95 ? "#33bb66"
@@ -698,6 +706,22 @@ export default function BurnScanner() {
                         }}>
                           {fPct(row.emissionRetention)}
                         </span>
+                      </td>
+
+                      {/* Post-gate share — the real consequence of burning at this subnet's current position */}
+                      <td style={{ ...S.td, fontWeight: 600 }}
+                        title={row.gateRatio != null
+                          ? `Actual post-gate emission share: ${fPct(row.postGateShare)}. r=${row.gateRatio.toFixed(2)}× the bar, elasticity ${row.gateElasticity.toFixed(2)}×. Burning at the current rate costs roughly ${fPct(row.burnEmissionImpactPct)} of share (linearized estimate).`
+                          : "Not enough data to compute gate position"}
+                      >
+                        {row.postGateShare != null ? (
+                          <span style={{ color: row.gateRatio >= 1 ? "#33bb66" : row.gateRatio >= 0.8 ? "#ddaa00" : "#ff6644" }}>
+                            {fPct(row.postGateShare)}
+                            <span style={{ color: "#333355", fontSize: "9px", marginLeft: "4px" }}>(r={row.gateRatio.toFixed(2)}×)</span>
+                          </span>
+                        ) : (
+                          <span style={{ color: "#333355" }}>{"—"}</span>
+                        )}
                       </td>
 
                       {/* Recycled Lifetime */}
@@ -777,7 +801,7 @@ export default function BurnScanner() {
                     {/* Expanded detail row */}
                     {isExpanded && (
                       <tr>
-                        <td colSpan={9} style={S.expandedRow}>
+                        <td colSpan={10} style={S.expandedRow}>
                           <div style={{ display: "flex", gap: "32px", flexWrap: "wrap" }}>
                             <div>
                               <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
@@ -789,10 +813,18 @@ export default function BurnScanner() {
                             </div>
                             <div>
                               <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
-                                CHAIN EMISSION (1-b)
+                                PRE-GATE INPUT (1-b)
                               </div>
                               <div style={{ color: row.emissionRetention >= 0.95 ? "#33bb66" : row.emissionRetention >= 0.50 ? "#ddaa00" : "#ff4455" }}>
                                 {fPct(row.emissionRetention)}
+                              </div>
+                            </div>
+                            <div>
+                              <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>
+                                POST-GATE SHARE
+                              </div>
+                              <div style={{ color: row.gateRatio >= 1 ? "#33bb66" : row.gateRatio >= 0.8 ? "#ddaa00" : "#ff6644" }}>
+                                {row.postGateShare != null ? fPct(row.postGateShare) : "—"}
                               </div>
                             </div>
                             <div>
@@ -906,7 +938,7 @@ export default function BurnScanner() {
                               color: "#6666aa",
                               fontSize: "9px",
                             }}>
-                              v3.4.6 chain impact: {fPct(row.incentiveBurn)} miner burn reduces chain emission to {fPct(row.emissionRetention)} of potential. Formula: emission = price {"\u00D7"} root_prop {"\u00D7"} {row.emissionRetention.toFixed(2)}
+                              v440 gate impact: {fPct(row.incentiveBurn)} miner burn weights demand by {fPct(row.emissionRetention)} (pre-gate). {row.gateRatio != null ? `At r=${row.gateRatio.toFixed(2)}\u00D7 the bar, that actually costs \u2248${fPct(row.burnEmissionImpactPct)} of post-gate share (elasticity ${row.gateElasticity.toFixed(2)}\u00D7) \u2014 real share: ${fPct(row.postGateShare)}.` : "Gate position unavailable."} demand = price {"\u00D7"} (1 {"\u2212"} burn), then passed through the gate \u2014 see The Bar tab.
                             </div>
                           )}
                         </td>

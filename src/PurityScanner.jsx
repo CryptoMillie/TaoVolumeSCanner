@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useSharedData } from "./DataContext.jsx";
+import { useGateConfig } from "./lib/GateConfigContext.jsx";
 import { fetchColdkeyDistributionMap } from "./sri/api.js";
 import { scorePurity } from "./purity/scoring.js";
 import { PURITY_TIER_CONFIG, SIGNAL_LABELS, SIGNAL_WEIGHTS } from "./purity/constants.js";
@@ -176,6 +177,7 @@ function MethodologySection() {
 
 export default function PurityScanner() {
   const { refreshTaoStats } = useSharedData();
+  const { q, h } = useGateConfig();
   const [scored, setScored] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
@@ -207,7 +209,7 @@ export default function PurityScanner() {
         .filter(id => id != null);
       // Fetch coldkey distribution in parallel batches
       const coldkeyMap = await fetchColdkeyDistributionMap(netuids);
-      const results = scorePurity(subnets, pools, meta, coldkeyMap);
+      const results = scorePurity(subnets, pools, meta, coldkeyMap, { q, h });
       setScored(results);
       setTs(new Date());
     } catch (e) {
@@ -215,9 +217,9 @@ export default function PurityScanner() {
     }
     setLoading(false);
     scanningRef.current = false;
-  }, []);
+  }, [refreshTaoStats, q, h]);
 
-  useEffect(() => { scan(); }, []);
+  useEffect(() => { scan(); }, [scan]);
   useEffect(() => {
     clearInterval(timerRef.current);
     if (auto) timerRef.current = setInterval(scan, freq * 1000);

@@ -1,6 +1,15 @@
 // Burn Scanner Scoring — Uses incentive_burn (miner_burn) rate + recycled fields from subnet data
 // Post v3.4.6: emission_share = price × root_prop × (1 − miner_burn)
 // Burning miner emission now directly reduces chain-level emission, not just internal alpha.
+//
+// v440: `emissionRetention = 1 - incentiveBurn` is now only the *input* to
+// demand (see src/lib/gate.js's demandFromPriceAndBurn) — it is NOT the
+// final retained-emission fraction anymore, because demand is then passed
+// through the convex gate. A subnet near the bar can lose far more than its
+// raw burn % once the gate's elasticity amplifies the hit; a subnet deep in
+// the tail loses far less because it was already crushed regardless of burn.
+// `postGateShare`/`gateElasticity`/`burnEmissionImpact` below show the
+// actual post-gate consequence of burning at this subnet's current position.
 
 import {
   BLOCKS_PER_DAY,
@@ -9,6 +18,7 @@ import {
   MODERATE_BURN_PCT,
   LIGHT_BURN_PCT,
 } from "./constants.js";
+import { GATE_DEFAULTS, applyGate, demandFromPriceAndBurn } from "../lib/gate.js";
 
 /**
  * Classify burn status based on incentive_burn rate (the primary burn signal).
@@ -71,7 +81,7 @@ function detectManualBurn(row) {
 /**
  * Full scoring: compute burn metrics from subnet latest data + pool data.
  */
-export function scoreBurns(subnets, pools, meta) {
+export function scoreBurns(subnets, pools, meta, gateConfig = GATE_DEFAULTS) {
   const subnetArr = Array.isArray(subnets) ? subnets : (subnets?.data || []);
   const poolArr = Array.isArray(pools) ? pools : (pools?.data || []);
 
@@ -81,6 +91,21 @@ export function scoreBurns(subnets, pools, meta) {
     const id = p.netuid ?? p.subnet_id;
     if (id != null) poolMap[id] = p;
   });
+
+  // v440 gate pass (taostats-proxy demand — see The Bar tab for the
+  // verified on-chain source + reconciliation).
+  const demandRows = subnetArr
+    .filter((s) => (s.netuid ?? s.subnet_id) !== 0 && (parseFloat(s.emission) || 0) > 0)
+    .map((s) => {
+      const netuid = s.netuid ?? s.subnet_id;
+      const pool = poolMap[netuid];
+      const price = pool ? parseFloat(pool.price || pool.alpha_price || 0) : 0;
+      const burn = parseFloat(s.incentive_burn || 0);
+      return { netuid, demand: demandFromPriceAndBurn(price, burn), emissionEnabled: true };
+    });
+  const gated = applyGate(demandRows, gateConfig);
+  const gateByNetuid = {};
+  gated.forEach((g) => { gateByNetuid[g.netuid] = g; });
 
   const rows = [];
   const now = Date.now();
@@ -157,16 +182,31 @@ export function scoreBurns(subnets, pools, meta) {
     // Status classification based on incentive_burn rate
     const status = classifyBurnStatus(incentiveBurn, recycledLifetime);
 
-    // Chain emission penalty: (1 - miner_burn) — under v3.4.6, burning miner
-    // emission now directly reduces the subnet's share of chain-level emission.
-    // emissionRetention = 1.0 means full emission; 0.0 means zero emission.
+    // Pre-gate input: (1 - miner_burn) is the factor demand is weighted by
+    // (see demandFromPriceAndBurn in lib/gate.js) — it is NOT the final
+    // retained-emission fraction post-v440. emissionRetention = 1.0 means no
+    // demand suppression from burning; 0.0 means all miner emission withheld.
     const emissionRetention = 1 - incentiveBurn;
+
+    const gate = gateByNetuid[netuid] || null;
+    // Approximate post-gate cost of burning: removing all burn would scale
+    // demand up by 1/(1-burn); locally, elasticity converts that relative
+    // demand gain into a relative share gain. This is a linearization around
+    // the subnet's current position, not an exact re-run of the gate with
+    // burn=0 (which would also shift theta/every other subnet's share).
+    const burnEmissionImpactPct = gate && incentiveBurn > 0 && incentiveBurn < 1
+      ? gate.elasticity * (incentiveBurn / (1 - incentiveBurn))
+      : 0;
 
     const row = {
       netuid,
       name,
       incentiveBurn,
       emissionRetention,
+      gateRatio: gate?.ratio ?? null,
+      postGateShare: gate?.share ?? null,
+      gateElasticity: gate?.elasticity ?? null,
+      burnEmissionImpactPct,
       recycledLifetime,
       recycled24h,
       estimated30dBurn,

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { DataProvider } from "./DataContext.jsx";
+import { GateConfigProvider } from "./lib/GateConfigContext.jsx";
 import VolumeScanner from "./VolumeScanner.jsx";
 import SRIScanner from "./SRIScanner.jsx";
 import HealthScanner from "./HealthScanner.jsx";
@@ -10,6 +11,7 @@ import GemScanner from "./GemScanner.jsx";
 import ConvictionScanner from "./ConvictionScanner.jsx";
 import BurnScanner from "./BurnScanner.jsx";
 import WhaleScanner from "./WhaleScanner.jsx";
+import BarScanner from "./BarScanner.jsx";
 
 const TAB_STYLE = (active) => ({
   background: active ? "#1818cc" : "transparent",
@@ -29,6 +31,7 @@ export default function App() {
 
   return (
     <DataProvider>
+    <GateConfigProvider>
     <div style={{ fontFamily: "'JetBrains Mono','Fira Code','Courier New',monospace", background: "#070710", minHeight: "100vh" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap');
@@ -73,10 +76,14 @@ export default function App() {
         <button onClick={() => setTab("whale")} style={TAB_STYLE(tab === "whale")}>
           WHALE WATCHER {"\uD83D\uDC33"}
         </button>
+        <button onClick={() => setTab("bar")} style={TAB_STYLE(tab === "bar")}>
+          THE BAR {"\u25B0"}
+        </button>
       </div>
 
-      {tab === "volume" ? <VolumeScanner /> : tab === "sri" ? <SRIScanner /> : tab === "health" ? <HealthScanner /> : tab === "intel" ? <IntelScanner /> : tab === "alpha" ? <AlphaScanner /> : tab === "purity" ? <PurityScanner /> : tab === "gem" ? <GemScanner /> : tab === "conviction" ? <ConvictionScanner /> : tab === "burn" ? <BurnScanner /> : tab === "whale" ? <WhaleScanner /> : <VolumeScanner />}
+      {tab === "volume" ? <VolumeScanner /> : tab === "sri" ? <SRIScanner /> : tab === "health" ? <HealthScanner /> : tab === "intel" ? <IntelScanner /> : tab === "alpha" ? <AlphaScanner /> : tab === "purity" ? <PurityScanner /> : tab === "gem" ? <GemScanner /> : tab === "conviction" ? <ConvictionScanner /> : tab === "burn" ? <BurnScanner /> : tab === "whale" ? <WhaleScanner /> : tab === "bar" ? <BarScanner /> : <VolumeScanner />}
     </div>
+    </GateConfigProvider>
     </DataProvider>
   );
 }

@@ -1,6 +1,15 @@
 // SRI Scoring Engine — Percentile ranking, dimension scoring, composite calc
+//
+// v440: emission share is now a gated (convex), not linear, function of
+// demand — see src/lib/gate.js. D1's m1_2 metric used to be raw
+// emission/totalEmission; it's now the post-gate share, so two subnets with
+// identical raw emission can score differently here depending on how far
+// each sits from the bar. `gateRatio`/`gateElasticity`/`gatePct` are exposed
+// on each scored row so the UI can show *why* (see SRIScanner.jsx's r/gate
+// column and the expanded-row detail).
 
 import { DIMENSION_WEIGHTS, TIER_THRESHOLDS } from "./constants.js";
+import { GATE_DEFAULTS, applyGate, demandFromPriceAndBurn } from "../lib/gate.js";
 
 /**
  * Compute percentile rank of value within array (0–100).
@@ -25,7 +34,7 @@ function num(v) {
 /**
  * Extract raw metrics from subnet + pool data for a single subnet.
  */
-function extractMetrics(subnet, pool, totalEmission, mechData = null) {
+function extractMetrics(subnet, pool, gatedShare, mechData = null) {
   const src = mechData || subnet;
   const emission = num(subnet.emission);
   const activeMiners = num(src.active_miners) || 1;
@@ -39,12 +48,14 @@ function extractMetrics(subnet, pool, totalEmission, mechData = null) {
   const alphaInPool = pool ? num(pool.alpha_in_pool) : 0;
   const poolRank = pool ? num(pool.rank) : 999;
 
-  // D1: Emission Strength (post-TaoFlow: price × root_prop × (1 − miner_burn))
+  // D1: Emission Strength (v440: price weighted by (1 − miner_burn), passed
+  // through the gate — see lib/gate.js. m1_2 is the GATED share, not raw
+  // emission/totalEmission, so it reflects proximity to the bar.)
   const price = pool ? num(pool.price || pool.alpha_price) : 0;
   const alphaIssuance = pool ? num(pool.alpha_in_pool) + num(pool.alpha_staked) : 0;
   const taoWeight = pool ? num(pool.tao_weight || pool.total_tao) : 0;
-  const m1_1 = price; // EMA pool price — primary emission driver
-  const m1_2 = totalEmission > 0 ? emission / totalEmission : 0; // Emission share
+  const m1_1 = price; // EMA pool price — primary demand driver
+  const m1_2 = gatedShare; // Post-gate emission share
   const m1_3 = poolRank; // Delist distance
   // Root proportion proxy: tao_weight / (tao_weight + alpha_issuance)
   const m1_4 = (taoWeight + alphaIssuance) > 0 ? taoWeight / (taoWeight + alphaIssuance) : 0;
@@ -100,7 +111,7 @@ function resolveLogo(netuid, meta) {
  * - scored: subnets with emission > 0, ranked by composite
  * - unscored: subnets with emission == 0, shown with null composite
  */
-export function scoreSubnets(subnetsRaw, poolsRaw, meta = {}, mechDataMap = {}) {
+export function scoreSubnets(subnetsRaw, poolsRaw, meta = {}, mechDataMap = {}, gateConfig = GATE_DEFAULTS) {
   const subnets = Array.isArray(subnetsRaw) ? subnetsRaw : (subnetsRaw?.data || []);
   const pools = Array.isArray(poolsRaw) ? poolsRaw : (poolsRaw?.data || []);
 
@@ -143,14 +154,28 @@ export function scoreSubnets(subnetsRaw, poolsRaw, meta = {}, mechDataMap = {}) 
 
   if (activeSubnets.length === 0) return { scored: [], unscored };
 
-  const totalEmission = activeSubnets.reduce((sum, s) => sum + num(s.emission), 0);
+  // v440 gate pass: demand from taostats pool price × (1 − incentive_burn)
+  // (proxy for chain SubnetMovingPrice/MinerBurned — see The Bar tab for the
+  // verified on-chain source + reconciliation). Every active subnet here is
+  // emission-enabled by construction (filtered above).
+  const demandRows = activeSubnets.map(s => {
+    const netuid = s.netuid ?? s.subnet_id;
+    const pool = poolMap[netuid] || null;
+    const price = pool ? num(pool.price || pool.alpha_price) : 0;
+    const burn = num(s.incentive_burn);
+    return { netuid, demand: demandFromPriceAndBurn(price, burn), emissionEnabled: true };
+  });
+  const gated = applyGate(demandRows, gateConfig);
+  const gateByNetuid = {};
+  gated.forEach(g => { gateByNetuid[g.netuid] = g; });
 
   const items = activeSubnets.map(s => {
     const netuid = s.netuid ?? s.subnet_id;
     const pool = poolMap[netuid] || null;
     const mechData = mechDataMap[netuid] || null;
-    const metrics = extractMetrics(s, pool, totalEmission, mechData);
-    return { subnet: s, pool, netuid, metrics };
+    const gate = gateByNetuid[netuid];
+    const metrics = extractMetrics(s, pool, gate.share, mechData);
+    return { subnet: s, pool, netuid, metrics, gate };
   });
 
   const metricKeys = Object.keys(items[0].metrics);
@@ -194,6 +219,12 @@ export function scoreSubnets(subnetsRaw, poolsRaw, meta = {}, mechDataMap = {}) 
       dimensions: { D1: d1, D2: d2, D3: d3, D4: d4 },
       composite: Math.round(composite * 10) / 10,
       tier,
+      // v440 gate position — how this subnet's raw emission share was
+      // actually derived. Two subnets with identical `subnet.emission` can
+      // have very different `gateRatio` (see The Bar tab for full detail).
+      gateRatio: it.gate.ratio,
+      gatePct: it.gate.gate,
+      gateElasticity: it.gate.elasticity,
     };
   });
 
