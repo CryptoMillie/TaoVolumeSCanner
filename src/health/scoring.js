@@ -1,6 +1,7 @@
 // Subnet Health Scoring Engine — Universal scoring for all subnets (emission-independent)
 
 import { HEALTH_WEIGHTS, HEALTH_TIER_THRESHOLDS } from "./constants.js";
+import { annotateEmissionPerCap } from "../lib/emissionPerCap.js";
 
 function percentileRank(value, allValues) {
   if (allValues.length <= 1) return 50;
@@ -86,7 +87,7 @@ function extractMetrics(subnet, pool, mechData = null) {
  * Score all subnets with emission-independent health metrics.
  * Returns array of scored subnets (ALL subnets, no inactive split).
  */
-export function scoreHealth(subnetsRaw, poolsRaw, meta = {}, mechDataMap = {}) {
+export function scoreHealth(subnetsRaw, poolsRaw, meta = {}, mechDataMap = {}, taoUsdPrice = null) {
   const subnets = Array.isArray(subnetsRaw) ? subnetsRaw : (subnetsRaw?.data || []);
   const pools = Array.isArray(poolsRaw) ? poolsRaw : (poolsRaw?.data || []);
 
@@ -98,6 +99,8 @@ export function scoreHealth(subnetsRaw, poolsRaw, meta = {}, mechDataMap = {}) {
   });
 
   if (subnets.length === 0) return [];
+
+  const totalEmission = subnets.reduce((sum, s) => sum + num(s.emission), 0);
 
   // Extract metrics for ALL subnets
   const items = subnets.map(s => {
@@ -140,6 +143,8 @@ export function scoreHealth(subnetsRaw, poolsRaw, meta = {}, mechDataMap = {}) {
                : composite >= HEALTH_TIER_THRESHOLDS.AMBER ? "amber"
                : "red";
 
+    const epc = annotateEmissionPerCap(it.subnet, it.pool, totalEmission, taoUsdPrice);
+
     return {
       netuid: it.netuid,
       name: resolveName(it.subnet, it.pool, it.netuid, meta),
@@ -152,6 +157,10 @@ export function scoreHealth(subnetsRaw, poolsRaw, meta = {}, mechDataMap = {}) {
       composite: Math.round(composite * 10) / 10,
       tier,
       hasEmission: num(it.subnet.emission) > 0,
+      emissionPerCap: epc.emissionPerCap,
+      epcTier: epc.epcTier,
+      si: epc.si,
+      change1M: epc.change1M,
     };
   });
 

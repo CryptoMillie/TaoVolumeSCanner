@@ -5,6 +5,7 @@ import { fetchSubnetLatest, fetchPoolLatest, fetchSubnetMeta } from "./sri/api.j
 
 const COINGECKO_CACHE_KEY = "tao_cg_cache";
 const TAOSTATS_CACHE_KEY = "tao_ts_cache";
+const TAO_USD_CACHE_KEY = "tao_usd_cache";
 const CACHE_MAX_AGE_MS = 15 * 60 * 1000; // 15 min
 const CG_MIN_INTERVAL_MS = 60 * 1000; // 60s floor — CoinGecko free tier only updates ~60s
 
@@ -73,6 +74,29 @@ async function fetchCoinGecko() {
   return data;
 }
 
+// ─── TAO/USD spot price (CoinGecko, free, no key) ───────────
+// Needed to convert taostats' rao-scale, TAO-denominated pool.market_cap
+// into real USD — see src/lib/emissionPerCap.js for why. Same in-memory
+// cache shape as fetchCoinGecko(); reuses CACHE_MAX_AGE_MS since a subnet's
+// market cap doesn't need per-minute freshness for the emission-per-cap
+// signal (unlike VolumeScanner's frequent CoinGecko refresh).
+let taoUsdCache = null;
+let taoUsdCacheTs = 0;
+
+async function fetchTaoUsdPrice() {
+  if (taoUsdCache && Date.now() - taoUsdCacheTs < CACHE_MAX_AGE_MS) return taoUsdCache;
+
+  const url = "https://api.coingecko.com/api/v3/simple/price?ids=bittensor&vs_currencies=usd";
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`CoinGecko ${res.status}: ${res.statusText}`);
+  const data = await res.json();
+  const price = data?.bittensor?.usd ?? null;
+  taoUsdCache = price;
+  taoUsdCacheTs = Date.now();
+  saveToStorage(TAO_USD_CACHE_KEY, price);
+  return price;
+}
+
 // ─── Request deduplication ─────────────────────────────────
 // Prevents duplicate concurrent requests for the same data
 const inFlight = {};
@@ -89,6 +113,7 @@ const DataContext = createContext(null);
 export function DataProvider({ children }) {
   const [taoStats, setTaoStats] = useState(() => loadFromStorage(TAOSTATS_CACHE_KEY));
   const [coinGecko, setCoinGecko] = useState(() => loadFromStorage(COINGECKO_CACHE_KEY));
+  const [taoUsdPrice, setTaoUsdPrice] = useState(() => loadFromStorage(TAO_USD_CACHE_KEY));
   const [loading, setLoading] = useState(false);
   const [lastFetch, setLastFetch] = useState(null);
   const fetchingRef = useRef(false);
@@ -117,26 +142,36 @@ export function DataProvider({ children }) {
     });
   }, []);
 
+  // Fetch TAO/USD spot price (deduplicated + retry)
+  const refreshTaoUsdPrice = useCallback(async () => {
+    return deduplicatedFetch("taoUsdPrice", async () => {
+      const price = await fetchWithRetry(() => fetchTaoUsdPrice());
+      setTaoUsdPrice(price);
+      return price;
+    });
+  }, []);
+
   // Refresh all shared data at once
   const refreshAll = useCallback(async () => {
     if (fetchingRef.current) {
-      const [ts, cg] = await Promise.all([refreshTaoStats(), refreshCoinGecko()]);
-      return { taoStats: ts, coinGecko: cg };
+      const [ts, cg, tp] = await Promise.all([refreshTaoStats(), refreshCoinGecko(), refreshTaoUsdPrice()]);
+      return { taoStats: ts, coinGecko: cg, taoUsdPrice: tp };
     }
     fetchingRef.current = true;
     setLoading(true);
     try {
-      const [ts, cg] = await Promise.all([
+      const [ts, cg, tp] = await Promise.all([
         refreshTaoStats(),
         refreshCoinGecko(),
+        refreshTaoUsdPrice(),
       ]);
       setLastFetch(Date.now());
-      return { taoStats: ts, coinGecko: cg };
+      return { taoStats: ts, coinGecko: cg, taoUsdPrice: tp };
     } finally {
       setLoading(false);
       fetchingRef.current = false;
     }
-  }, [refreshTaoStats, refreshCoinGecko]);
+  }, [refreshTaoStats, refreshCoinGecko, refreshTaoUsdPrice]);
 
   // Force-refresh CoinGecko — with 60s minimum interval to avoid wasting quota
   const forceRefreshCoinGecko = useCallback(async () => {
@@ -153,10 +188,12 @@ export function DataProvider({ children }) {
   const value = {
     taoStats,
     coinGecko,
+    taoUsdPrice,
     loading,
     lastFetch,
     refreshTaoStats,
     refreshCoinGecko,
+    refreshTaoUsdPrice,
     refreshAll,
     forceRefreshCoinGecko,
   };

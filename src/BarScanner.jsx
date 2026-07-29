@@ -181,11 +181,14 @@ function PanelTable({ title, hint, rows, mode }) {
               <th style={S.th}>{"Δr 7d"}</th>
               <th style={S.th}>BURN</th>
               <th style={S.th}>SHARE</th>
+              <th style={S.th} title="Sentiment index (fear/greed), 0-100">SI</th>
+              <th style={S.th}>1M</th>
+              <th style={S.th} title="emissionSharePct / marketCapUsdMillions — high + weak SI/negative 1M = falling knife, not opportunity">EPC</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
-              <tr><td colSpan={9} style={{ ...S.td, textAlign: "center", color: "#333355" }}>No subnets in this range right now</td></tr>
+              <tr><td colSpan={12} style={{ ...S.td, textAlign: "center", color: "#333355" }}>No subnets in this range right now</td></tr>
             )}
             {rows.map((r) => {
               const burnFlag = r.minerBurn > MINER_BURN_FLAG_THRESHOLD;
@@ -210,6 +213,11 @@ function PanelTable({ title, hint, rows, mode }) {
                   </td>
                   <td style={{ ...S.td, color: burnFlag ? "#ff6644" : "#555577" }}>{fPct(r.minerBurn, 0)}{burnFlag ? " ⚠" : ""}</td>
                   <td style={{ ...S.td, color: "#444466" }}>{fPct(r.share, 2)}</td>
+                  <td style={{ ...S.td, color: r.si == null ? "#333355" : r.si >= 60 ? "#33bb66" : r.si < 55 ? "#ff6644" : "#ddaa00" }}>{r.si != null ? r.si.toFixed(0) : "—"}</td>
+                  <td style={{ ...S.td, color: r.change1M == null ? "#333355" : r.change1M > 0 ? "#33bb66" : "#cc3333" }}>{r.change1M != null ? `${r.change1M >= 0 ? "+" : ""}${r.change1M.toFixed(1)}%` : "—"}</td>
+                  <td style={{ ...S.td, color: r.epcTier === "suspect" ? "#ff6644" : r.epcTier === "healthy" ? "#33bb66" : r.epcTier === "elevated" ? "#ddaa00" : "#666688", fontWeight: r.epcTier === "suspect" || r.epcTier === "healthy" ? 700 : 400 }}>
+                    {r.emissionPerCap != null ? `${r.emissionPerCap.toFixed(2)}${r.epcTier === "suspect" ? " ⚠" : ""}` : "—"}
+                  </td>
                 </tr>
               );
             })}
@@ -400,6 +408,7 @@ export default function BarScanner() {
           <button style={S.btn(sortMode === SORT_MODES.RISING)} onClick={() => setSortMode(SORT_MODES.RISING)}>fastest rising</button>
           <button style={S.btn(sortMode === SORT_MODES.FALLING)} onClick={() => setSortMode(SORT_MODES.FALLING)}>fastest falling</button>
           <button style={S.btn(sortMode === SORT_MODES.ELASTICITY)} onClick={() => setSortMode(SORT_MODES.ELASTICITY)}>highest elasticity</button>
+          <button style={S.btn(sortMode === SORT_MODES.EPC)} onClick={() => setSortMode(SORT_MODES.EPC)}>highest emission-per-cap</button>
         </div>
 
         {sortMode === SORT_MODES.DISTANCE ? (
@@ -409,7 +418,7 @@ export default function BarScanner() {
           </div>
         ) : (
           <PanelTable
-            title={sortMode === SORT_MODES.RISING ? "FASTEST RISING (Δr 24h)" : sortMode === SORT_MODES.FALLING ? "FASTEST FALLING (Δr 24h)" : "HIGHEST ELASTICITY"}
+            title={sortMode === SORT_MODES.RISING ? "FASTEST RISING (Δr 24h)" : sortMode === SORT_MODES.FALLING ? "FASTEST FALLING (Δr 24h)" : sortMode === SORT_MODES.EPC ? "HIGHEST EMISSION-PER-CAP" : "HIGHEST ELASTICITY"}
             hint="all emission-enabled subnets, unified view"
             rows={unifiedSorted.slice(0, 30)}
             mode={null}

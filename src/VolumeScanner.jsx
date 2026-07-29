@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useSharedData } from "./DataContext.jsx";
 import { useGateConfig } from "./lib/GateConfigContext.jsx";
 import { applyGate, demandFromPriceAndBurn } from "./lib/gate.js";
+import { annotateEmissionPerCap } from "./lib/emissionPerCap.js";
 
 function lvl(v){ return v>=40?"critical":v>=20?"high":v>=10?"medium":"low"; }
 function fV(v){ return v>=1e6?`${(v/1e6).toFixed(2)}M`:v>=1e3?`${(v/1e3).toFixed(0)}K`:`${v.toFixed(0)}`; }
@@ -16,7 +17,7 @@ const LEVEL_CONFIG = {
 };
 
 export default function VolumeScanner() {
-  const { forceRefreshCoinGecko, refreshTaoStats } = useSharedData();
+  const { forceRefreshCoinGecko, refreshTaoStats, refreshTaoUsdPrice } = useSharedData();
   const { q, h } = useGateConfig();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -36,9 +37,10 @@ export default function VolumeScanner() {
     try {
       // Force-refresh CoinGecko (Volume Scanner auto-refreshes frequently)
       // TaoStats uses shared cached data, refresh if not loaded yet
-      const [raw, tsData] = await Promise.all([
+      const [raw, tsData, taoUsdPrice] = await Promise.all([
         forceRefreshCoinGecko(),
         refreshTaoStats(),
+        refreshTaoUsdPrice(),
       ]);
       const poolsRaw = tsData.pools;
       const metaRaw = tsData.meta;
@@ -52,6 +54,12 @@ export default function VolumeScanner() {
         const id = p.netuid ?? p.subnet_id;
         if (id != null) poolMap[id] = p;
       });
+      const subnetMap = {};
+      subnetArr.forEach(s => {
+        const id = s.netuid ?? s.subnet_id;
+        if (id != null) subnetMap[id] = s;
+      });
+      const totalRealEmission = subnetArr.reduce((sum, s) => sum + (parseFloat(s.emission) || 0), 0);
       const nameMap = {};
       pools.forEach(p => {
         const id = p.netuid ?? p.subnet_id;
@@ -95,11 +103,19 @@ export default function VolumeScanner() {
           ? Math.pow(1 + spike / 100, gate.elasticity) - 1
           : null;
 
+        const subnet = netuid != null ? subnetMap[netuid] : null;
+        const pool = netuid != null ? poolMap[netuid] : null;
+        const epc = subnet ? annotateEmissionPerCap(subnet, pool, totalRealEmission, taoUsdPrice) : {};
+
         return { ...s, mc, vmp, lv: lvl(vmp), spike,
           label: nameMap[s.symbol] || s.name,
           c24: s.price_change_percentage_24h || 0,
           c7: s.price_change_percentage_7d_in_currency || 0,
-          netuid, gateRatio: gate?.ratio ?? null, projectedEmissionDelta };
+          netuid, gateRatio: gate?.ratio ?? null, projectedEmissionDelta,
+          emissionPerCap: epc.emissionPerCap ?? null,
+          epcTier: epc.epcTier ?? "normal",
+          si: epc.si ?? null,
+          change1M: epc.change1M ?? null };
       }).sort((a, b) => b.vmp - a.vmp);
 
       const newSpikes = processed
@@ -112,7 +128,7 @@ export default function VolumeScanner() {
       setRows(processed); setTs(new Date());
     } catch(e) { setErr(e.message); }
     setLoading(false);
-  }, [forceRefreshCoinGecko, refreshTaoStats, q, h]);
+  }, [forceRefreshCoinGecko, refreshTaoStats, refreshTaoUsdPrice, q, h]);
 
   useEffect(() => { scan(); }, [scan]);
   useEffect(() => {
@@ -258,6 +274,9 @@ export default function VolumeScanner() {
                 <th style={{...S.th, width:"56px", ...(sortCol==="c24"?S.thActive:{})}} onClick={()=>toggleSort("c24")}>24H {sortCol==="c24"?(sortAsc?"\u25B2":"\u25BC"):""}</th>
                 <th style={{...S.th, width:"56px", ...(sortCol==="c7"?S.thActive:{})}} onClick={()=>toggleSort("c7")}>7D {sortCol==="c7"?(sortAsc?"\u25B2":"\u25BC"):""}</th>
                 <th style={{...S.th, width:"68px", ...(sortCol==="ath_change_percentage"?S.thActive:{})}} onClick={()=>toggleSort("ath_change_percentage")}>ATH DISC {sortCol==="ath_change_percentage"?(sortAsc?"\u25B2":"\u25BC"):""}</th>
+                <th style={{...S.th, width:"50px", ...(sortCol==="si"?S.thActive:{})}} onClick={()=>toggleSort("si")} title="Sentiment index (fear/greed), 0-100">SI {sortCol==="si"?(sortAsc?"\u25B2":"\u25BC"):""}</th>
+                <th style={{...S.th, width:"56px", ...(sortCol==="change1M"?S.thActive:{})}} onClick={()=>toggleSort("change1M")}>1M {sortCol==="change1M"?(sortAsc?"\u25B2":"\u25BC"):""}</th>
+                <th style={{...S.th, width:"60px", ...(sortCol==="emissionPerCap"?S.thActive:{})}} onClick={()=>toggleSort("emissionPerCap")} title="emissionSharePct / marketCapUsdMillions">EPC {sortCol==="emissionPerCap"?(sortAsc?"\u25B2":"\u25BC"):""}</th>
               </tr>
             </thead>
             <tbody>
@@ -302,6 +321,11 @@ export default function VolumeScanner() {
                     <td style={{...S.cell, color:c24col}}>{fP(s.c24)}</td>
                     <td style={{...S.cell, color:c7col}}>{fP(s.c7)}</td>
                     <td style={{...S.cell, color:athCol}}>{(s.ath_change_percentage||0).toFixed(0)}%</td>
+                    <td style={{...S.cell, color: s.si==null?"#1e1e30":s.si>=60?"#33bb66":s.si<55?"#ff6644":"#ddaa00"}}>{s.si!=null?s.si.toFixed(0):"—"}</td>
+                    <td style={{...S.cell, color: s.change1M==null?"#1e1e30":s.change1M>0?"#33bb66":"#cc3333"}}>{s.change1M!=null?`${s.change1M>=0?"+":""}${s.change1M.toFixed(1)}%`:"—"}</td>
+                    <td style={{...S.cell, color: s.epcTier==="suspect"?"#ff6644":s.epcTier==="healthy"?"#33bb66":s.epcTier==="elevated"?"#ddaa00":"#555577", fontWeight: s.epcTier==="suspect"||s.epcTier==="healthy"?700:400}}>
+                      {s.emissionPerCap!=null?`${s.emissionPerCap.toFixed(2)}${s.epcTier==="suspect"?" ⚠":""}`:"—"}
+                    </td>
                   </tr>
                 );
               })}

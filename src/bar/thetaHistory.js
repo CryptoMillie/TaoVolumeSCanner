@@ -45,8 +45,9 @@ function save(entries) {
  * @param {number} snapshot.rankAtBar - how far down the sorted list the crossing sits
  * @param {number} snapshot.effectiveCount - inverse Simpson index
  * @param {Record<string, number>} snapshot.ratios - netuid -> r, rounded for storage compactness
+ * @param {Record<string, number>} [snapshot.emissionPerCap] - netuid -> emissionPerCap, rounded
  */
-export function recordSnapshot({ theta, onChainTheta = null, rankAtBar, effectiveCount, ratios }) {
+export function recordSnapshot({ theta, onChainTheta = null, rankAtBar, effectiveCount, ratios, emissionPerCap = null }) {
   const history = load();
   const last = history[history.length - 1];
   const now = Date.now();
@@ -60,7 +61,16 @@ export function recordSnapshot({ theta, onChainTheta = null, rankAtBar, effectiv
     rounded[netuid] = Math.round(r * 1000) / 1000;
   }
 
-  const entry = { ts: now, theta, onChainTheta, rankAtBar, effectiveCount, ratios: rounded };
+  let roundedEpc = null;
+  if (emissionPerCap) {
+    roundedEpc = {};
+    for (const [netuid, v] of Object.entries(emissionPerCap)) {
+      if (v == null) continue;
+      roundedEpc[netuid] = Math.round(v * 1000) / 1000;
+    }
+  }
+
+  const entry = { ts: now, theta, onChainTheta, rankAtBar, effectiveCount, ratios: rounded, emissionPerCap: roundedEpc };
   const next = [...history, entry].slice(-THETA_HISTORY_MAX_ENTRIES);
   save(next);
   return next;
@@ -113,6 +123,25 @@ export function getPastRatio(netuid, hoursAgo) {
   const pastRatio = past?.ratios?.[String(netuid)];
   if (pastRatio == null) return null;
   return pastRatio;
+}
+
+/**
+ * emissionPerCap value from N hours ago for a given netuid (not a delta —
+ * caller compares against the current value). Returns null if unavailable.
+ * Read-only — any tab can call this to show a trend indicator even though
+ * only src/bar/scoring.js writes to this store (single writer, many
+ * readers, same pattern as getPastRatio).
+ */
+export function getPastEmissionPerCap(netuid, hoursAgo) {
+  const history = load();
+  if (history.length < 2) return null;
+  const targetTs = Date.now() - hoursAgo * 60 * 60 * 1000;
+  const oldest = history[0];
+  if (oldest.ts > targetTs) return null;
+  const past = nearestEntryBefore(history, targetTs);
+  const pastValue = past?.emissionPerCap?.[String(netuid)];
+  if (pastValue == null) return null;
+  return pastValue;
 }
 
 export function clearThetaHistory() {

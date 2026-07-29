@@ -7,6 +7,7 @@ import {
   IMPACT_SEVERITY,
   RAO_PER_TAO,
 } from "./constants.js";
+import { annotateEmissionPerCap } from "../lib/emissionPerCap.js";
 
 function num(v) {
   if (v == null) return 0;
@@ -100,7 +101,7 @@ function impactSeverity(impactPct) {
  * @param {object} meta - GitHub subnet metadata
  * @param {object} coldkeyMap - Map of netuid -> { uniqueColdkeys, totalCount, entries[] }
  */
-export function scoreWhales(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}) {
+export function scoreWhales(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}, taoUsdPrice = null) {
   const subnets = Array.isArray(subnetsRaw) ? subnetsRaw : (subnetsRaw?.data || []);
   const pools = Array.isArray(poolsRaw) ? poolsRaw : (poolsRaw?.data || []);
 
@@ -112,6 +113,8 @@ export function scoreWhales(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}) {
 
   const activeSubnets = subnets;
   if (activeSubnets.length === 0) return [];
+
+  const totalRealEmission = subnets.reduce((sum, s) => sum + num(s.emission), 0);
 
   // Build raw items for all active subnets (include those without coldkey data)
   const items = [];
@@ -312,6 +315,7 @@ export function scoreWhales(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}) {
         hhi: { score: Math.round((100 - percentileRank(it.hhi, hhiValues)) * 10) / 10 },
         impact: { score: Math.round((100 - percentileRank(it.impactPct, impactValues)) * 10) / 10 },
       } : null,
+      ...annotateEmissionPerCap(it.subnet, it.pool, totalRealEmission, taoUsdPrice),
     };
   });
 

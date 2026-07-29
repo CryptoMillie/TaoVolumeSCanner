@@ -19,6 +19,7 @@ import {
   LIGHT_BURN_PCT,
 } from "./constants.js";
 import { GATE_DEFAULTS, applyGate, demandFromPriceAndBurn } from "../lib/gate.js";
+import { annotateEmissionPerCap } from "../lib/emissionPerCap.js";
 
 /**
  * Classify burn status based on incentive_burn rate (the primary burn signal).
@@ -81,7 +82,7 @@ function detectManualBurn(row) {
 /**
  * Full scoring: compute burn metrics from subnet latest data + pool data.
  */
-export function scoreBurns(subnets, pools, meta, gateConfig = GATE_DEFAULTS) {
+export function scoreBurns(subnets, pools, meta, gateConfig = GATE_DEFAULTS, taoUsdPrice = null) {
   const subnetArr = Array.isArray(subnets) ? subnets : (subnets?.data || []);
   const poolArr = Array.isArray(pools) ? pools : (pools?.data || []);
 
@@ -91,6 +92,11 @@ export function scoreBurns(subnets, pools, meta, gateConfig = GATE_DEFAULTS) {
     const id = p.netuid ?? p.subnet_id;
     if (id != null) poolMap[id] = p;
   });
+
+  // Real (not gated) total emission — emission-per-cap's denominator.
+  const totalRealEmission = subnetArr
+    .filter((s) => (s.netuid ?? s.subnet_id) !== 0)
+    .reduce((sum, s) => sum + (parseFloat(s.emission) || 0), 0);
 
   // v440 gate pass (taostats-proxy demand — see The Bar tab for the
   // verified on-chain source + reconciliation).
@@ -220,6 +226,7 @@ export function scoreBurns(subnets, pools, meta, gateConfig = GATE_DEFAULTS) {
       emissionPerBlock,
       emission,
       hasData: true,
+      ...annotateEmissionPerCap(s, pool, totalRealEmission, taoUsdPrice),
     };
 
     // Detect manual burn signal

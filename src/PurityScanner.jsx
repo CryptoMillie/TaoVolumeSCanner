@@ -78,7 +78,7 @@ function SignalBar({ score, label, available }) {
 function ExpandedRow({ item }) {
   return (
     <tr>
-      <td colSpan={9} style={{ padding: "0" }}>
+      <td colSpan={12} style={{ padding: "0" }}>
         <div style={{ padding: "12px 18px 12px 40px", background: "#0a0a14", borderBottom: "1px solid #131326" }}>
           <div style={{ display: "flex", gap: "28px", flexWrap: "wrap" }}>
             <div style={{ minWidth: "280px" }}>
@@ -176,7 +176,7 @@ function MethodologySection() {
 }
 
 export default function PurityScanner() {
-  const { refreshTaoStats } = useSharedData();
+  const { refreshTaoStats, refreshTaoUsdPrice } = useSharedData();
   const { q, h } = useGateConfig();
   const [scored, setScored] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -197,8 +197,9 @@ export default function PurityScanner() {
     setLoading(true);
     setErr(null);
     try {
-      const [{ subnets, pools, meta }] = await Promise.all([
+      const [{ subnets, pools, meta }, taoUsdPrice] = await Promise.all([
         refreshTaoStats(),
+        refreshTaoUsdPrice(),
         new Promise(r => setTimeout(r, 400)), // minimum visual feedback
       ]);
       // Extract netuids from active subnets for coldkey distribution fetch
@@ -209,7 +210,7 @@ export default function PurityScanner() {
         .filter(id => id != null);
       // Fetch coldkey distribution in parallel batches
       const coldkeyMap = await fetchColdkeyDistributionMap(netuids);
-      const results = scorePurity(subnets, pools, meta, coldkeyMap, { q, h });
+      const results = scorePurity(subnets, pools, meta, coldkeyMap, { q, h }, taoUsdPrice);
       setScored(results);
       setTs(new Date());
     } catch (e) {
@@ -217,7 +218,7 @@ export default function PurityScanner() {
     }
     setLoading(false);
     scanningRef.current = false;
-  }, [refreshTaoStats, q, h]);
+  }, [refreshTaoStats, refreshTaoUsdPrice, q, h]);
 
   useEffect(() => { scan(); }, [scan]);
   useEffect(() => {
@@ -254,6 +255,9 @@ export default function PurityScanner() {
       case "emissionSharePct": av = a.emissionSharePct; bv = b.emissionSharePct; break;
       case "poolTao": av = a.poolTao; bv = b.poolTao; break;
       case "pump": av = a.pumpDetected ? 1 : 0; bv = b.pumpDetected ? 1 : 0; break;
+      case "si": av = a.si ?? -1; bv = b.si ?? -1; break;
+      case "change1M": av = a.change1M ?? -Infinity; bv = b.change1M ?? -Infinity; break;
+      case "emissionPerCap": av = a.emissionPerCap ?? -Infinity; bv = b.emissionPerCap ?? -Infinity; break;
       case "name": return sortDir === "asc" ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
       default: av = a.purityScore; bv = b.purityScore;
     }
@@ -363,6 +367,9 @@ export default function PurityScanner() {
                 <th style={{ ...S.th("poolTao"), width: "80px" }} onClick={() => handleSort("poolTao")}>POOL SIZE{sortArrow("poolTao")}</th>
                 <th style={{ ...S.th(""), width: "60px" }}>TREND</th>
                 <th style={{ ...S.th("pump"), width: "50px" }} onClick={() => handleSort("pump")}>FLAG{sortArrow("pump")}</th>
+                <th style={{ ...S.th("si"), width: "50px" }} onClick={() => handleSort("si")} title="Sentiment index (fear/greed), 0-100">SI{sortArrow("si")}</th>
+                <th style={{ ...S.th("change1M"), width: "56px" }} onClick={() => handleSort("change1M")}>1M{sortArrow("change1M")}</th>
+                <th style={{ ...S.th("emissionPerCap"), width: "60px" }} onClick={() => handleSort("emissionPerCap")} title="emissionSharePct / marketCapUsdMillions">EPC{sortArrow("emissionPerCap")}</th>
                 <th style={{ ...S.th(""), width: "30px" }}></th>
               </tr>
             </thead>
@@ -395,6 +402,11 @@ export default function PurityScanner() {
                       <td style={{ ...S.cell, color: "#555577" }}>{fTao(s.poolTao)}</td>
                       <td style={S.cell}><TrendIndicator trend={s.trend} /></td>
                       <td style={S.cell}>{s.pumpDetected ? <PumpBadge /> : <span style={{ color: "#1e1e30", fontSize: "10px" }}>{"\u2014"}</span>}</td>
+                      <td style={{ ...S.cell, color: s.si == null ? "#1a1a2e" : s.si >= 60 ? "#33bb66" : s.si < 55 ? "#ff6644" : "#ddaa00" }}>{s.si != null ? s.si.toFixed(0) : "\u2014"}</td>
+                      <td style={{ ...S.cell, color: s.change1M == null ? "#1a1a2e" : s.change1M > 0 ? "#33bb66" : "#cc3333" }}>{s.change1M != null ? `${s.change1M >= 0 ? "+" : ""}${s.change1M.toFixed(1)}%` : "\u2014"}</td>
+                      <td style={{ ...S.cell, color: s.epcTier === "suspect" ? "#ff6644" : s.epcTier === "healthy" ? "#33bb66" : s.epcTier === "elevated" ? "#ddaa00" : "#666688", fontWeight: s.epcTier === "suspect" || s.epcTier === "healthy" ? 700 : 400 }}>
+                        {s.emissionPerCap != null ? `${s.emissionPerCap.toFixed(2)}${s.epcTier === "suspect" ? " \u26A0" : ""}` : "\u2014"}
+                      </td>
                       <td style={{ ...S.cell, color: "#1a1a2e", fontSize: "9px" }}>{isExpanded ? "\u25BC" : "\u25B6"}</td>
                     </tr>
                     {isExpanded && <ExpandedRow item={s} />}

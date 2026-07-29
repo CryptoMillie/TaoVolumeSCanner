@@ -52,4 +52,13 @@ export const SORT_MODES = {
   RISING: "rising", // fastest-rising Δr
   FALLING: "falling", // fastest-falling Δr
   ELASTICITY: "elasticity", // highest elasticity
+  EPC: "epc", // highest emission-per-cap, descending
+};
+
+// Emission-per-cap disambiguation display thresholds (mirrors lib/emissionPerCap.js)
+export const EPC_TIER_CONFIG = {
+  healthy: { label: "HEALTHY", color: "#33bb66", border: "#1a3a20" },
+  suspect: { label: "SUSPECT ⚠", color: "#ff6644", border: "#3a2010" },
+  elevated: { label: "ELEVATED", color: "#ddaa00", border: "#3a3000" },
+  normal: { label: "", color: "#555577", border: "transparent" },
 };

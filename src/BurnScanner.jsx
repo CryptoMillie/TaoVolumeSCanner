@@ -251,7 +251,7 @@ const S = {
 // ─── Main Component ──────────────────────────────────────
 
 export default function BurnScanner() {
-  const { refreshTaoStats } = useSharedData();
+  const { refreshTaoStats, refreshTaoUsdPrice } = useSharedData();
   const { q, h } = useGateConfig();
   const [data, setData] = useState([]);
   const [summary, setSummary] = useState(null);
@@ -271,12 +271,12 @@ export default function BurnScanner() {
     setLoading(true);
     setErr(null);
     try {
-      const tsData = await refreshTaoStats();
+      const [tsData, taoUsdPrice] = await Promise.all([refreshTaoStats(), refreshTaoUsdPrice()]);
       const meta = tsData.meta || {};
       const pools = tsData.pools;
       const subnets = tsData.subnets;
 
-      const scored = scoreBurns(subnets, pools, meta, { q, h });
+      const scored = scoreBurns(subnets, pools, meta, { q, h }, taoUsdPrice);
       const stats = computeBurnSummary(scored);
 
       setData(scored);
@@ -287,7 +287,7 @@ export default function BurnScanner() {
     } finally {
       setLoading(false);
     }
-  }, [refreshTaoStats, q, h]);
+  }, [refreshTaoStats, refreshTaoUsdPrice, q, h]);
 
   useEffect(() => {
     scan();
@@ -339,6 +339,9 @@ export default function BurnScanner() {
       case "incentiveBurn": av = a.incentiveBurn; bv = b.incentiveBurn; break;
       case "emissionRetention": av = a.emissionRetention; bv = b.emissionRetention; break;
       case "postGateShare": av = a.postGateShare ?? 0; bv = b.postGateShare ?? 0; break;
+      case "si": av = a.si ?? -1; bv = b.si ?? -1; break;
+      case "change1M": av = a.change1M ?? -Infinity; bv = b.change1M ?? -Infinity; break;
+      case "emissionPerCap": av = a.emissionPerCap ?? -Infinity; bv = b.emissionPerCap ?? -Infinity; break;
       case "recycledLifetime": av = a.recycledLifetime; bv = b.recycledLifetime; break;
       case "recycled24h": av = a.recycled24h; bv = b.recycled24h; break;
       case "estimated30dBurn": av = a.estimated30dBurn; bv = b.estimated30dBurn; break;
@@ -606,6 +609,9 @@ export default function BurnScanner() {
                     Manual{sortArrow("manualSignal")}
                   </Tooltip>
                 </th>
+                <th style={S.th} onClick={() => handleSort("si")} title="Sentiment index (fear/greed), 0-100">SI{sortArrow("si")}</th>
+                <th style={S.th} onClick={() => handleSort("change1M")}>1M{sortArrow("change1M")}</th>
+                <th style={S.th} onClick={() => handleSort("emissionPerCap")} title="emissionSharePct / marketCapUsdMillions — high + weak SI/negative 1M = falling knife, not opportunity">EPC{sortArrow("emissionPerCap")}</th>
               </tr>
             </thead>
             <tbody>
@@ -796,12 +802,26 @@ export default function BurnScanner() {
                           <span style={{ color: "#333355" }}>{"\u2014"}</span>
                         )}
                       </td>
+
+                      {/* SI / 1M / Emission-per-cap */}
+                      <td style={{ ...S.td, color: row.si == null ? "#333355" : row.si >= 60 ? "#33bb66" : row.si < 55 ? "#ff6644" : "#ddaa00" }}>{row.si != null ? row.si.toFixed(0) : "\u2014"}</td>
+                      <td style={{ ...S.td, color: row.change1M == null ? "#333355" : row.change1M > 0 ? "#33bb66" : "#cc3333" }}>{row.change1M != null ? `${row.change1M >= 0 ? "+" : ""}${row.change1M.toFixed(1)}%` : "\u2014"}</td>
+                      <td style={{ ...S.td, fontWeight: row.epcTier === "suspect" || row.epcTier === "healthy" ? 700 : 400 }}>
+                        {row.emissionPerCap != null ? (
+                          <span
+                            title={row.epcTier === "suspect" ? "Suspect: high emission-per-cap with weak SI or a 1M crash \u2014 possible falling-knife, not a genuine opportunity." : row.epcTier === "healthy" ? "Healthy: high emission-per-cap with strong SI and positive 1M momentum." : ""}
+                            style={{ color: row.epcTier === "suspect" ? "#ff6644" : row.epcTier === "healthy" ? "#33bb66" : row.epcTier === "elevated" ? "#ddaa00" : "#666688" }}
+                          >
+                            {row.emissionPerCap.toFixed(2)}{row.epcTier === "suspect" ? " \u26a0" : ""}
+                          </span>
+                        ) : "\u2014"}
+                      </td>
                     </tr>
 
                     {/* Expanded detail row */}
                     {isExpanded && (
                       <tr>
-                        <td colSpan={10} style={S.expandedRow}>
+                        <td colSpan={13} style={S.expandedRow}>
                           <div style={{ display: "flex", gap: "32px", flexWrap: "wrap" }}>
                             <div>
                               <div style={{ color: "#333355", fontSize: "9px", marginBottom: "2px" }}>

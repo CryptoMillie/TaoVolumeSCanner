@@ -10,6 +10,7 @@
 
 import { DIMENSION_WEIGHTS, TIER_THRESHOLDS } from "./constants.js";
 import { GATE_DEFAULTS, applyGate, demandFromPriceAndBurn } from "../lib/gate.js";
+import { annotateEmissionPerCap } from "../lib/emissionPerCap.js";
 
 /**
  * Compute percentile rank of value within array (0–100).
@@ -111,7 +112,7 @@ function resolveLogo(netuid, meta) {
  * - scored: subnets with emission > 0, ranked by composite
  * - unscored: subnets with emission == 0, shown with null composite
  */
-export function scoreSubnets(subnetsRaw, poolsRaw, meta = {}, mechDataMap = {}, gateConfig = GATE_DEFAULTS) {
+export function scoreSubnets(subnetsRaw, poolsRaw, meta = {}, mechDataMap = {}, gateConfig = GATE_DEFAULTS, taoUsdPrice = null) {
   const subnets = Array.isArray(subnetsRaw) ? subnetsRaw : (subnetsRaw?.data || []);
   const pools = Array.isArray(poolsRaw) ? poolsRaw : (poolsRaw?.data || []);
 
@@ -153,6 +154,10 @@ export function scoreSubnets(subnetsRaw, poolsRaw, meta = {}, mechDataMap = {}, 
   });
 
   if (activeSubnets.length === 0) return { scored: [], unscored };
+
+  // Real (not gated) total emission — the denominator for emission-per-cap's
+  // "what taostats itself would show" emission share (see lib/emissionPerCap.js).
+  const totalRealEmission = activeSubnets.reduce((sum, s) => sum + num(s.emission), 0);
 
   // v440 gate pass: demand from taostats pool price × (1 − incentive_burn)
   // (proxy for chain SubnetMovingPrice/MinerBurned — see The Bar tab for the
@@ -208,6 +213,8 @@ export function scoreSubnets(subnetsRaw, poolsRaw, meta = {}, mechDataMap = {}, 
                : composite >= TIER_THRESHOLDS.AMBER ? "amber"
                : "red";
 
+    const epc = annotateEmissionPerCap(it.subnet, it.pool, totalRealEmission, taoUsdPrice);
+
     return {
       netuid: it.netuid,
       name: resolveName(it.subnet, it.pool, it.netuid, meta),
@@ -217,6 +224,10 @@ export function scoreSubnets(subnetsRaw, poolsRaw, meta = {}, mechDataMap = {}, 
       metrics: it.metrics,
       pctRanks,
       dimensions: { D1: d1, D2: d2, D3: d3, D4: d4 },
+      emissionPerCap: epc.emissionPerCap,
+      epcTier: epc.epcTier,
+      si: epc.si,
+      change1M: epc.change1M,
       composite: Math.round(composite * 10) / 10,
       tier,
       // v440 gate position — how this subnet's raw emission share was

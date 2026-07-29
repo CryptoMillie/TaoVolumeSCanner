@@ -2,6 +2,7 @@
 // Post Conviction v2: every subnet has a lock, so we measure lock as % of total subnet alpha
 
 import { HEAVY_PCT, MODERATE_PCT, LIGHT_PCT, STRONG_THRESHOLD, BUILDING_MIN, GATE_THRESHOLD } from "./constants.js";
+import { annotateEmissionPerCap } from "../lib/emissionPerCap.js";
 
 function num(v) {
   if (v == null) return 0;
@@ -144,7 +145,7 @@ export function categorizeBuckets(entry) {
 /**
  * Process raw conviction data into scored/classified entries
  */
-export function scoreConviction(convictionData, poolData, subnetMeta) {
+export function scoreConviction(convictionData, poolData, subnetMeta, subnetsRaw = [], taoUsdPrice = null) {
   if (!convictionData?.results) return [];
 
   // Build pool lookup
@@ -154,6 +155,16 @@ export function scoreConviction(convictionData, poolData, subnetMeta) {
     const id = p.netuid ?? p.subnet_id;
     if (id != null) poolMap[id] = p;
   });
+
+  // Build subnet lookup — needed for emission-per-cap (not otherwise used
+  // by this tab, whose focus is lock/ownership, not emission).
+  const subnetMap = {};
+  const subnetArr = Array.isArray(subnetsRaw) ? subnetsRaw : (subnetsRaw?.data || []);
+  subnetArr.forEach((s) => {
+    const id = s.netuid ?? s.subnet_id;
+    if (id != null) subnetMap[id] = s;
+  });
+  const totalRealEmission = subnetArr.reduce((sum, s) => sum + num(s.emission), 0);
 
   return convictionData.results.map((entry) => {
     const pool = poolMap[entry.netuid];
@@ -197,11 +208,18 @@ export function scoreConviction(convictionData, poolData, subnetMeta) {
     const withChallengers = { ...enriched, challengers: scoredChallengers };
     const buckets = categorizeBuckets(withChallengers);
 
+    const subnet = subnetMap[entry.netuid] || null;
+    const epc = subnet ? annotateEmissionPerCap(subnet, pool, totalRealEmission, taoUsdPrice) : {};
+
     return {
       ...withChallengers,
       lockPct,
       status,
       buckets,
+      emissionPerCap: epc.emissionPerCap ?? null,
+      epcTier: epc.epcTier ?? "normal",
+      si: epc.si ?? null,
+      change1M: epc.change1M ?? null,
     };
   });
 }

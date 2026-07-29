@@ -19,6 +19,7 @@ import {
   RAO_PER_TAO,
 } from "./constants.js";
 import { GATE_DEFAULTS, applyGate, demandFromPriceAndBurn } from "../lib/gate.js";
+import { annotateEmissionPerCap } from "../lib/emissionPerCap.js";
 
 function num(v) {
   if (v == null) return 0;
@@ -124,7 +125,7 @@ function estimateAgeDays(subnet) {
  * @param {object} meta - GitHub subnet metadata
  * @param {object} coldkeyMap - Map of netuid -> { uniqueColdkeys, totalCount, entries[] }
  */
-export function scorePurity(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}, gateConfig = GATE_DEFAULTS) {
+export function scorePurity(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}, gateConfig = GATE_DEFAULTS, taoUsdPrice = null) {
   const subnets = Array.isArray(subnetsRaw) ? subnetsRaw : (subnetsRaw?.data || []);
   const pools = Array.isArray(poolsRaw) ? poolsRaw : (poolsRaw?.data || []);
 
@@ -137,6 +138,10 @@ export function scorePurity(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}, ga
   // Only score subnets with emission > 0 (zero-emission subnets have no staking incentive to manipulate)
   const activeSubnets = subnets.filter(s => num(s.emission) > 0);
   if (activeSubnets.length === 0) return [];
+
+  // Real (not gated) total emission for emission-per-cap's "what taostats
+  // itself would show" numerator — distinct from Signal 1's gated share.
+  const totalRealEmission = activeSubnets.reduce((sum, s) => sum + num(s.emission), 0);
 
   // v440 gate pass (taostats-proxy demand — see The Bar tab for the
   // verified on-chain source + reconciliation).
@@ -326,6 +331,8 @@ export function scorePurity(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}, ga
       }
     }
 
+    const epc = annotateEmissionPerCap(it.subnet, it.pool, totalRealEmission, taoUsdPrice);
+
     return {
       netuid: it.netuid,
       name: resolveName(it.subnet, it.pool, it.netuid, meta),
@@ -356,6 +363,13 @@ export function scorePurity(subnetsRaw, poolsRaw, meta = {}, coldkeyMap = {}, ga
       netFlow30d: it.netFlow30d,
       gateRatio: it.gateRatio,
       gateElasticity: it.gateElasticity,
+      // `emissionSharePct` above is Signal 1's GATED share — emission-per-cap
+      // needs the REAL on-chain share, so its fields are named distinctly to
+      // avoid colliding with what Signal 1's UI already reads.
+      emissionPerCap: epc.emissionPerCap,
+      epcTier: epc.epcTier,
+      si: epc.si,
+      change1M: epc.change1M,
     };
   });
 

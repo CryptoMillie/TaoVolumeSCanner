@@ -116,7 +116,7 @@ function ExpandedRow({ item, flags }) {
   if (!item.dimensions) {
     return (
       <tr>
-        <td colSpan={13} style={{ padding: "0" }}>
+        <td colSpan={16} style={{ padding: "0" }}>
           <div style={{ padding: "12px 18px 12px 40px", background: "#0a0a14", borderBottom: "1px solid #131326", color: "#333355", fontSize: "10px" }}>
             No scoring data — subnet has zero emissions.
           </div>
@@ -126,7 +126,7 @@ function ExpandedRow({ item, flags }) {
   }
   return (
     <tr>
-      <td colSpan={13} style={{ padding: "0" }}>
+      <td colSpan={16} style={{ padding: "0" }}>
         <div style={{ padding: "12px 18px 12px 40px", background: "#0a0a14", borderBottom: "1px solid #131326" }}>
           <div style={{ display: "flex", gap: "28px", flexWrap: "wrap" }}>
             {Object.entries(DIMENSION_LABELS).map(([key, label]) => {
@@ -275,7 +275,7 @@ function MethodologySection() {
 }
 
 export default function SRIScanner() {
-  const { refreshTaoStats } = useSharedData();
+  const { refreshTaoStats, refreshTaoUsdPrice } = useSharedData();
   const { q, h } = useGateConfig();
   const [scored, setScored] = useState([]);
   const [unscored, setUnscored] = useState([]);
@@ -284,14 +284,19 @@ export default function SRIScanner() {
   const [err, setErr] = useState(null);
   const [ts, setTs] = useState(null);
   const [expanded, setExpanded] = useState({});
+  const [sortCol, setSortCol] = useState(null);
+  const [sortAsc, setSortAsc] = useState(false);
 
   const scan = useCallback(async () => {
     setLoading(true);
     setErr(null);
     try {
-      const { subnets, pools, meta } = await refreshTaoStats();
+      const [{ subnets, pools, meta }, taoUsdPrice] = await Promise.all([
+        refreshTaoStats(),
+        refreshTaoUsdPrice(),
+      ]);
       const mechDataMap = await fetchMechDataMap(subnets);
-      const { scored: s, unscored: u } = scoreSubnets(subnets, pools, meta, mechDataMap, { q, h });
+      const { scored: s, unscored: u } = scoreSubnets(subnets, pools, meta, mechDataMap, { q, h }, taoUsdPrice);
       const flags = evaluateFlags(s);
       // Also evaluate flags for unscored subnets
       const allForFlags = [...s, ...u];
@@ -304,7 +309,7 @@ export default function SRIScanner() {
       setErr(e.message);
     }
     setLoading(false);
-  }, [refreshTaoStats, q, h]);
+  }, [refreshTaoStats, refreshTaoUsdPrice, q, h]);
 
   useEffect(() => { scan(); }, [scan]);
 
@@ -312,7 +317,21 @@ export default function SRIScanner() {
     setExpanded(prev => ({ ...prev, [netuid]: !prev[netuid] }));
   };
 
-  const allSubnets = [...scored, ...unscored];
+  const toggleSort = (col) => {
+    if (sortCol === col) setSortAsc(a => !a);
+    else { setSortCol(col); setSortAsc(false); }
+  };
+
+  let allSubnets = [...scored, ...unscored];
+  if (sortCol) {
+    allSubnets = [...allSubnets].sort((a, b) => {
+      const av = a[sortCol], bv = b[sortCol];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1; // nulls last regardless of direction
+      if (bv == null) return -1;
+      return sortAsc ? av - bv : bv - av;
+    });
+  }
   const counts = {
     total: allSubnets.length,
     green: scored.filter(s => s.tier === "green").length,
@@ -389,6 +408,23 @@ export default function SRIScanner() {
               </>
             );
           })()}
+          <td style={{ ...S.cell, color: s.si == null ? "#1a1a2e" : s.si >= 60 ? "#33bb66" : s.si < 55 ? "#ff6644" : "#ddaa00" }}>{s.si != null ? s.si.toFixed(0) : "—"}</td>
+          <td style={{ ...S.cell, color: s.change1M == null ? "#1a1a2e" : s.change1M > 0 ? "#33bb66" : "#cc3333" }}>{s.change1M != null ? `${s.change1M >= 0 ? "+" : ""}${s.change1M.toFixed(1)}%` : "—"}</td>
+          <td style={{ ...S.cell, fontWeight: s.epcTier === "suspect" || s.epcTier === "healthy" ? 700 : 400 }}>
+            {s.emissionPerCap != null ? (
+              <span
+                title={s.epcTier === "suspect" ? "Suspect: high ratio with weak SI or a 1M crash — possible falling-knife, not a genuine opportunity." : s.epcTier === "healthy" ? "Healthy: high ratio with strong SI and positive 1M momentum." : ""}
+                style={{
+                  color: s.epcTier === "suspect" ? "#ff6644" : s.epcTier === "healthy" ? "#33bb66" : s.epcTier === "elevated" ? "#ddaa00" : "#666688",
+                  border: s.epcTier === "suspect" ? "1px solid #3a2010" : "none",
+                  padding: s.epcTier === "suspect" ? "1px 4px" : 0,
+                  borderRadius: "3px",
+                }}
+              >
+                {s.emissionPerCap.toFixed(2)}{s.epcTier === "suspect" ? " ⚠" : ""}
+              </span>
+            ) : "—"}
+          </td>
           <td style={S.cellLeft}><FlagPills flags={flags} /></td>
         </tr>
         {isExpanded && <ExpandedRow item={s} flags={flags} />}
@@ -465,6 +501,9 @@ export default function SRIScanner() {
                 <th style={{ ...S.th, width: "68px" }}>EMISSION</th>
                 <th style={{ ...S.th, width: "68px" }}>INJECTED</th>
                 <th style={{ ...S.th, width: "68px" }}>CHAIN BUY</th>
+                <th style={{ ...S.th, width: "50px", cursor: "pointer" }} onClick={() => toggleSort("si")} title="Sentiment index (fear/greed), 0-100">SI{sortCol==="si"?(sortAsc?" ▲":" ▼"):""}</th>
+                <th style={{ ...S.th, width: "56px", cursor: "pointer" }} onClick={() => toggleSort("change1M")}>1M{sortCol==="change1M"?(sortAsc?" ▲":" ▼"):""}</th>
+                <th style={{ ...S.th, width: "60px", cursor: "pointer" }} onClick={() => toggleSort("emissionPerCap")} title="emissionSharePct / marketCapUsdMillions — click to sort descending">EPC{sortCol==="emissionPerCap"?(sortAsc?" ▲":" ▼"):""}</th>
                 <th style={{ ...S.thLeft, width: "120px" }}>FLAGS</th>
               </tr>
             </thead>
@@ -472,7 +511,7 @@ export default function SRIScanner() {
               {scored.map((s, i) => renderRow(s, i, false))}
               {unscored.length > 0 && (
                 <tr>
-                  <td colSpan={13} style={{ padding: "6px 18px", background: "#08080e", borderBottom: "1px solid #0e0e18", color: "#222244", fontSize: "9px", letterSpacing: "0.1em" }}>
+                  <td colSpan={16} style={{ padding: "6px 18px", background: "#08080e", borderBottom: "1px solid #0e0e18", color: "#222244", fontSize: "9px", letterSpacing: "0.1em" }}>
                     INACTIVE SUBNETS (ZERO EMISSION)
                   </td>
                 </tr>

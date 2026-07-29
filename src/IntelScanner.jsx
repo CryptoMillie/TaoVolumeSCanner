@@ -113,6 +113,7 @@ export default function IntelScanner() {
       const result = await refreshAll();
       const cgData = result.coinGecko;
       const sriData = result.taoStats;
+      const taoUsdPrice = result.taoUsdPrice;
 
       // Build name lookup: "sn44" -> best name from TaoStats pools + GitHub meta
       // Same logic as VolumeScanner — handles mechid 0 and 1
@@ -150,7 +151,7 @@ export default function IntelScanner() {
       setMovers(topMovers);
 
       // Institutional scores
-      const instScores = scoreInstitutional(sriData.subnets, sriData.pools, sriData.meta, { q, h });
+      const instScores = scoreInstitutional(sriData.subnets, sriData.pools, sriData.meta, { q, h }, taoUsdPrice);
       setScores(instScores);
 
       setTs(new Date());
@@ -168,6 +169,9 @@ export default function IntelScanner() {
     else if (sortBy === "REV") { aVal = a.dimensions.REV; bVal = b.dimensions.REV; }
     else if (sortBy === "TAM") { aVal = a.dimensions.TAM; bVal = b.dimensions.TAM; }
     else if (sortBy === "PMF") { aVal = a.dimensions.PMF; bVal = b.dimensions.PMF; }
+    else if (sortBy === "si") { aVal = a.si ?? -1; bVal = b.si ?? -1; }
+    else if (sortBy === "change1M") { aVal = a.change1M ?? -Infinity; bVal = b.change1M ?? -Infinity; }
+    else if (sortBy === "emissionPerCap") { aVal = a.emissionPerCap ?? -Infinity; bVal = b.emissionPerCap ?? -Infinity; }
     else { aVal = a.composite; bVal = b.composite; }
     return sortDir === "desc" ? bVal - aVal : aVal - bVal;
   });
@@ -266,6 +270,9 @@ export default function IntelScanner() {
                     PMF {sortBy === "PMF" ? (sortDir === "desc" ? "\u25BC" : "\u25B2") : ""}
                   </th>
                   <th style={S.th} title="v440 gate: position relative to theta (the bar). REV's rev_2 sub-metric is derived from this, not raw emission share.">r (BAR)</th>
+                  <th style={S.th} onClick={() => toggleSort("si")} title="Sentiment index (fear/greed), 0-100">SI {sortBy === "si" ? (sortDir === "desc" ? "▼" : "▲") : ""}</th>
+                  <th style={S.th} onClick={() => toggleSort("change1M")}>1M {sortBy === "change1M" ? (sortDir === "desc" ? "▼" : "▲") : ""}</th>
+                  <th style={S.th} onClick={() => toggleSort("emissionPerCap")} title="emissionSharePct / marketCapUsdMillions">EPC {sortBy === "emissionPerCap" ? (sortDir === "desc" ? "▼" : "▲") : ""}</th>
                 </tr>
               </thead>
               <tbody>
@@ -302,6 +309,11 @@ export default function IntelScanner() {
                       </td>
                       <td style={{ ...S.cell, color: s.gateRatio == null ? "#333355" : s.gateRatio >= 1 ? "#33bb66" : s.gateRatio >= 0.8 ? "#ddaa00" : "#ff6644", fontWeight: 600 }}>
                         {s.gateRatio != null ? `${s.gateRatio.toFixed(2)}×` : "—"}
+                      </td>
+                      <td style={{ ...S.cell, color: s.si == null ? "#333355" : s.si >= 60 ? "#33bb66" : s.si < 55 ? "#ff6644" : "#ddaa00" }}>{s.si != null ? s.si.toFixed(0) : "—"}</td>
+                      <td style={{ ...S.cell, color: s.change1M == null ? "#333355" : s.change1M > 0 ? "#33bb66" : "#cc3333" }}>{s.change1M != null ? `${s.change1M >= 0 ? "+" : ""}${s.change1M.toFixed(1)}%` : "—"}</td>
+                      <td style={{ ...S.cell, color: s.epcTier === "suspect" ? "#ff6644" : s.epcTier === "healthy" ? "#33bb66" : s.epcTier === "elevated" ? "#ddaa00" : "#666688", fontWeight: s.epcTier === "suspect" || s.epcTier === "healthy" ? 700 : 400 }}>
+                        {s.emissionPerCap != null ? `${s.emissionPerCap.toFixed(2)}${s.epcTier === "suspect" ? " ⚠" : ""}` : "—"}
                       </td>
                     </tr>
                   );

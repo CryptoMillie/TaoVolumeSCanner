@@ -1,5 +1,34 @@
 # v440 Emission Gate — Implementation Notes
 
+## 0. Addendum (2026-07-29): Emission-per-cap screen
+
+Added `emissionPerCap = emissionSharePct / marketCapUsdMillions` as a
+sortable column + disambiguation flag across all 11 tabs (`src/lib/
+emissionPerCap.js`). Two things worth recording so they don't get
+re-derived from scratch:
+
+- **`pool.market_cap` (taostats) is NOT in USD.** It's rao-scale
+  TAO-denominated: `marketCapUsd = (pool.market_cap / 1e9) * taoUsdPrice`.
+  Verified empirically against a live subnet (SN107/Minos:
+  `73295070606934 / 1e9 * 190.90 ≈ $14.0M`, within ~3.5% of the brief's
+  same-subnet reference figure from a day earlier). taostats' free API has
+  no USD field for this — `taoUsdPrice` is fetched separately from
+  CoinGecko's `simple/price?ids=bittensor` (free, no key), added to
+  `DataContext.jsx` as `taoUsdPrice`/`refreshTaoUsdPrice()`.
+- **"SI" is `pool.fear_and_greed_index`.** Confirmed by cross-referencing
+  live values against the brief's worked examples (Minos: 86.6 live vs 86
+  cited) — this is taostats' free `dtao/pool/latest/v1` field, matching the
+  Fear(0-40)/Neutral(40-60)/Greed(61-80)/Euphoria(80-100) scale documented
+  for their "Subnet Sentiment Index." No new endpoint needed; every tab
+  already fetches this pool record.
+- `emissionPerCap`'s `emissionSharePct` numerator is deliberately the REAL
+  on-chain `emission/totalEmission` (what taostats itself would show), not
+  the client-recomputed *gated* share used elsewhere in this app for
+  scoring/ranking (see §7 above). These are two different concerns — one is
+  "what taostats already reports, divided by a number it doesn't compute,"
+  the other is "our own demand-based re-estimate of the v440 gate's output."
+  Do not merge them.
+
 This records what was actually verified on 2026-07-28 while implementing the
 v440 emission gate update, superseding the brief's stated assumptions where
 they turned out to be wrong or incomplete. If a future change to the gate

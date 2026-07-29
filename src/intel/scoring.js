@@ -11,6 +11,7 @@
 
 import { INST_WEIGHTS, INST_TIER_THRESHOLDS } from "./constants.js";
 import { GATE_DEFAULTS, applyGate, demandFromPriceAndBurn } from "../lib/gate.js";
+import { annotateEmissionPerCap } from "../lib/emissionPerCap.js";
 
 function percentileRank(value, allValues) {
   if (allValues.length <= 1) return 50;
@@ -60,7 +61,7 @@ function extractMetrics(subnet, pool, gatedShare) {
  * Score all subnets with institutional metrics.
  * Returns array sorted by composite score descending.
  */
-export function scoreInstitutional(subnetsRaw, poolsRaw, meta = {}, gateConfig = GATE_DEFAULTS) {
+export function scoreInstitutional(subnetsRaw, poolsRaw, meta = {}, gateConfig = GATE_DEFAULTS, taoUsdPrice = null) {
   const subnets = Array.isArray(subnetsRaw) ? subnetsRaw : (subnetsRaw?.data || []);
   const pools = Array.isArray(poolsRaw) ? poolsRaw : (poolsRaw?.data || []);
 
@@ -72,6 +73,7 @@ export function scoreInstitutional(subnetsRaw, poolsRaw, meta = {}, gateConfig =
 
   // Exclude SN0 (root) — it's infrastructure, not a product subnet
   const candidates = subnets.filter(s => (s.netuid ?? s.subnet_id) !== 0);
+  const totalRealEmission = candidates.reduce((sum, s) => sum + num(s.emission), 0);
 
   // v440 gate pass (taostats-proxy demand — see The Bar tab for the
   // verified on-chain source + reconciliation).
@@ -145,6 +147,7 @@ export function scoreInstitutional(subnetsRaw, poolsRaw, meta = {}, gateConfig =
       gateRatio: it.gate?.ratio ?? null,
       gatePct: it.gate?.gate ?? null,
       gateElasticity: it.gate?.elasticity ?? null,
+      ...annotateEmissionPerCap(it.subnet, it.pool, totalRealEmission, taoUsdPrice),
     };
   });
 

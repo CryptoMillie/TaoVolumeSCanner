@@ -515,8 +515,10 @@ function MiniBar({ score }) {
 
 // ─── Main Component ────────────────────────────────────────
 export default function GemScanner() {
-  const { refreshTaoStats, refreshCoinGecko } = useSharedData();
+  const { refreshTaoStats, refreshCoinGecko, refreshTaoUsdPrice } = useSharedData();
   const [scored, setScored] = useState([]);
+  const [epcSortCol, setEpcSortCol] = useState(null);
+  const [epcSortAsc, setEpcSortAsc] = useState(false);
   const [codeScores, setCodeScores] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
@@ -536,16 +538,17 @@ export default function GemScanner() {
     setErr(null);
     setProgress("Fetching TaoStats + CoinGecko...");
     try {
-      const [tsData, cgData] = await Promise.all([
+      const [tsData, cgData, taoUsdPrice] = await Promise.all([
         refreshTaoStats(),
         refreshCoinGecko(),
+        refreshTaoUsdPrice(),
       ]);
 
       setProgress("Fetching dev activity...");
       const devMap = await fetchDevActivity();
 
       setProgress("Scoring subnets...");
-      const results = scoreGems(tsData.subnets, tsData.pools, tsData.meta, devMap, cgData);
+      const results = scoreGems(tsData.subnets, tsData.pools, tsData.meta, devMap, cgData, taoUsdPrice);
       setScored(results);
 
       // Fetch GitHub repo data for Code Quality Radar (runs after main scan completes)
@@ -582,9 +585,9 @@ export default function GemScanner() {
     }
     setLoading(false);
     scanningRef.current = false;
-  }, []);
+  }, [refreshTaoStats, refreshCoinGecko, refreshTaoUsdPrice]);
 
-  useEffect(() => { scan(); }, []);
+  useEffect(() => { scan(); }, [scan]);
   useEffect(() => {
     clearInterval(timerRef.current);
     if (auto) timerRef.current = setInterval(scan, freq * 1000);
@@ -598,6 +601,22 @@ export default function GemScanner() {
     filter === "established" ? s.quadrant === "established" :
     filter === "dormant" ? s.quadrant === "dormant" : true
   );
+
+  const toggleEpcSort = (col) => {
+    if (epcSortCol === col) setEpcSortAsc(a => !a);
+    else { setEpcSortCol(col); setEpcSortAsc(false); }
+  };
+  const epcArrow = (col) => epcSortCol === col ? (epcSortAsc ? " ▲" : " ▼") : "";
+  const tableBase = filter === "all" ? scored : filtered;
+  const tableRows = epcSortCol
+    ? [...tableBase].sort((a, b) => {
+        const av = a[epcSortCol], bv = b[epcSortCol];
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        return epcSortAsc ? av - bv : bv - av;
+      })
+    : tableBase;
 
   const selectedItem = scored.find(s => s.netuid === selected) || null;
 
@@ -749,10 +768,13 @@ export default function GemScanner() {
                   <th style={{ padding: "6px 8px", fontSize: "10px", color: "#282844", letterSpacing: "0.1em", textAlign: "right", width: "60px" }}>7D CMTS</th>
                   <th style={{ padding: "6px 8px", fontSize: "10px", color: "#282844", letterSpacing: "0.1em", textAlign: "right", width: "70px" }}>MKT CAP</th>
                   <th style={{ padding: "6px 8px", fontSize: "10px", color: "#282844", letterSpacing: "0.1em", textAlign: "right", width: "50px" }}>VOL/MC</th>
+                  <th style={{ padding: "6px 8px", fontSize: "10px", color: "#282844", letterSpacing: "0.1em", textAlign: "right", cursor: "pointer" }} onClick={() => toggleEpcSort("si")} title="Sentiment index (fear/greed), 0-100">SI{epcArrow("si")}</th>
+                  <th style={{ padding: "6px 8px", fontSize: "10px", color: "#282844", letterSpacing: "0.1em", textAlign: "right", cursor: "pointer" }} onClick={() => toggleEpcSort("change1M")}>1M{epcArrow("change1M")}</th>
+                  <th style={{ padding: "6px 8px", fontSize: "10px", color: "#282844", letterSpacing: "0.1em", textAlign: "right", cursor: "pointer" }} onClick={() => toggleEpcSort("emissionPerCap")} title="emissionSharePct / marketCapUsdMillions (taostats pool, not the CoinGecko MKT CAP column)">EPC{epcArrow("emissionPerCap")}</th>
                 </tr>
               </thead>
               <tbody>
-                {(filter === "all" ? scored : filtered).map((s, i) => {
+                {tableRows.map((s, i) => {
                   const cfg = GEM_TIER_CONFIG[s.tier];
                   const qCfg = QUADRANTS[s.quadrant === "gem" ? "bottomRight" : s.quadrant === "established" ? "topRight" : s.quadrant === "overhyped" ? "topLeft" : "bottomLeft"];
                   const rowBg = s.quadrant === "gem"
@@ -786,6 +808,11 @@ export default function GemScanner() {
                       <td style={{ padding: "8px 8px", textAlign: "right", color: s.commits7d > 0 ? "#33bb66" : "#333355", fontWeight: 600 }}>{s.commits7d}</td>
                       <td style={{ padding: "8px 8px", textAlign: "right", color: "#555577" }}>${fN(s.marketCap)}</td>
                       <td style={{ padding: "8px 8px", textAlign: "right", color: s.volMcRatio >= 20 ? "#ff4455" : "#555577" }}>{s.volMcRatio.toFixed(1)}%</td>
+                      <td style={{ padding: "8px 8px", textAlign: "right", color: s.si == null ? "#1a1a2e" : s.si >= 60 ? "#33bb66" : s.si < 55 ? "#ff6644" : "#ddaa00" }}>{s.si != null ? s.si.toFixed(0) : "—"}</td>
+                      <td style={{ padding: "8px 8px", textAlign: "right", color: s.change1M == null ? "#1a1a2e" : s.change1M > 0 ? "#33bb66" : "#cc3333" }}>{s.change1M != null ? `${s.change1M >= 0 ? "+" : ""}${s.change1M.toFixed(1)}%` : "—"}</td>
+                      <td style={{ padding: "8px 8px", textAlign: "right", color: s.epcTier === "suspect" ? "#ff6644" : s.epcTier === "healthy" ? "#33bb66" : s.epcTier === "elevated" ? "#ddaa00" : "#666688", fontWeight: s.epcTier === "suspect" || s.epcTier === "healthy" ? 700 : 400 }}>
+                        {s.emissionPerCap != null ? `${s.emissionPerCap.toFixed(2)}${s.epcTier === "suspect" ? " ⚠" : ""}` : "—"}
+                      </td>
                     </tr>
                   );
                 })}

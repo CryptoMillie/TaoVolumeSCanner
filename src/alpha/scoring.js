@@ -1,6 +1,7 @@
 // Alpha Signal Scoring Engine — CoinGecko market data composite
 
 import { ALPHA_WEIGHTS, ALPHA_TIER_THRESHOLDS } from "./constants.js";
+import { annotateEmissionPerCap } from "../lib/emissionPerCap.js";
 
 function num(v) {
   if (v == null) return 0;
@@ -24,7 +25,7 @@ function percentileRank(value, allValues) {
  *   MARKET:    market_cap + inverse market_cap_rank (lower rank = better)
  *   ONCHAIN:   ATH proximity + 24h price range utilization
  */
-export function scoreAlphaSignals(coins, pools, meta) {
+export function scoreAlphaSignals(coins, pools, meta, subnets = [], taoUsdPrice = null) {
   if (!coins || !Array.isArray(coins) || coins.length === 0) return [];
 
   // Build symbol → pool lookup from TaoStats pool data (same as other tabs)
@@ -34,6 +35,16 @@ export function scoreAlphaSignals(coins, pools, meta) {
     const sym = (p.symbol || p.token_symbol || "").toLowerCase();
     if (sym) poolBySymbol[sym] = p;
   });
+
+  // Build netuid → subnet lookup — needed for emission-per-cap (this tab is
+  // otherwise pure CoinGecko, no emission data).
+  const subnetMap = {};
+  const subnetArr = Array.isArray(subnets) ? subnets : (subnets?.data || []);
+  subnetArr.forEach((s) => {
+    const id = s.netuid ?? s.subnet_id;
+    if (id != null) subnetMap[id] = s;
+  });
+  const totalRealEmission = subnetArr.reduce((sum, s) => sum + num(s.emission), 0);
 
   // Build netuid → meta lookup
   const metaMap = meta || {};
@@ -82,6 +93,8 @@ export function scoreAlphaSignals(coins, pools, meta) {
       raw: c,
       symbol: c.symbol || "???",
       name: resolvedName,
+      netuid,
+      pool,
       metrics: {
         momentum_1: Math.abs(priceChange24h), // absolute momentum (direction-agnostic strength)
         momentum_2: Math.abs(priceChange7d),
@@ -140,15 +153,23 @@ export function scoreAlphaSignals(coins, pools, meta) {
                          : it.display.priceChange24h < -5 ? "bearish"
                          : "neutral";
 
+    const subnet = it.netuid != null ? subnetMap[it.netuid] : null;
+    const epc = subnet ? annotateEmissionPerCap(subnet, it.pool, totalRealEmission, taoUsdPrice) : {};
+
     return {
       ...it.display,
       symbol: it.symbol,
       name: it.name,
+      netuid: it.netuid,
       dimensions: { MOMENTUM, VOLUME, MARKET, ONCHAIN },
       composite: Math.round(composite * 10) / 10,
       tier,
       sentimentLabel,
       raw: it.raw,
+      emissionPerCap: epc.emissionPerCap ?? null,
+      epcTier: epc.epcTier ?? "normal",
+      si: epc.si ?? null,
+      change1M: epc.change1M ?? null,
     };
   });
 

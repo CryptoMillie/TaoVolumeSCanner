@@ -68,6 +68,24 @@ function saveToStorage(data) {
   }
 }
 
+// ─── TAO/USD spot price (CoinGecko, free, no key) ───────────
+// Duplicated from DataContext.jsx's private fetchTaoUsdPrice() rather than
+// imported — this module is called as a plain async function outside React,
+// same reasoning as duplicating conviction/api.js's RPC helpers above.
+let taoUsdCache = null;
+let taoUsdCacheTs = 0;
+
+async function fetchTaoUsdPrice() {
+  if (taoUsdCache && Date.now() - taoUsdCacheTs < CACHE_TTL_MS) return taoUsdCache;
+  const res = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=bittensor&vs_currencies=usd");
+  if (!res.ok) throw new Error(`CoinGecko ${res.status}: ${res.statusText}`);
+  const data = await res.json();
+  const price = data?.bittensor?.usd ?? null;
+  taoUsdCache = price;
+  taoUsdCacheTs = Date.now();
+  return price;
+}
+
 // ─── twox128 + storage key helpers (same approach as conviction/api.js) ───
 
 function twox128(input) {
@@ -391,16 +409,30 @@ export async function fetchBarInputs({ force = false } = {}) {
       minerBurn,
       burnSource,
       emissionEnabled,
-      marketCap: pool ? num(pool.market_cap) : 0,
+      marketCap: pool ? num(pool.market_cap) : 0, // raw, rao-scale TAO — see lib/emissionPerCap.js for USD conversion
       onChainEmission: num(s.emission),
+      // Emission-per-cap disambiguation inputs (added 2026-07-29). Both come
+      // straight from the same taostats pool record already being fetched —
+      // fear_and_greed_index is what's referred to as "SI" throughout the
+      // app, confirmed empirically against live subnet data.
+      si: pool && pool.fear_and_greed_index != null ? num(pool.fear_and_greed_index) : null,
+      change1M: pool && pool.price_change_1_month != null ? num(pool.price_change_1_month) : null,
     });
   }
 
   const totalOnChainEmission = rows.reduce((a, r) => a + r.onChainEmission, 0);
 
+  let taoUsdPrice = null;
+  try {
+    taoUsdPrice = await fetchTaoUsdPrice();
+  } catch {
+    // non-critical — emissionPerCap just can't be computed this refresh
+  }
+
   const data = {
     rows,
     totalOnChainEmission,
+    taoUsdPrice,
     onChainTheta: chain?.onChainTheta ?? null,
     onChainQ: chain?.onChainQ ?? null,
     onChainH: chain?.onChainH ?? null,

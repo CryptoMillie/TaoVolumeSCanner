@@ -78,7 +78,7 @@ function truncateColdkey(ck) {
 function ExpandedRow({ item }) {
   return (
     <tr>
-      <td colSpan={10} style={{ padding: "0" }}>
+      <td colSpan={13} style={{ padding: "0" }}>
         <div style={{ padding: "12px 18px 12px 40px", background: "#0a0a14", borderBottom: "1px solid #131326" }}>
           <div style={{ display: "flex", gap: "28px", flexWrap: "wrap" }}>
             {/* Signal Breakdown */}
@@ -216,7 +216,7 @@ function MethodologySection() {
 }
 
 export default function WhaleScanner() {
-  const { refreshTaoStats } = useSharedData();
+  const { refreshTaoStats, refreshTaoUsdPrice } = useSharedData();
   const [scored, setScored] = useState([]);
   const [loading, setLoading] = useState(false);
   const [coldkeyProgress, setColdkeyProgress] = useState(null); // { completed, total, failed }
@@ -237,13 +237,14 @@ export default function WhaleScanner() {
     setErr(null);
     setColdkeyProgress(null);
     try {
-      const [{ subnets, pools, meta }] = await Promise.all([
+      const [{ subnets, pools, meta }, taoUsdPrice] = await Promise.all([
         refreshTaoStats(),
+        refreshTaoUsdPrice(),
         new Promise(r => setTimeout(r, 400)),
       ]);
 
       // Show all subnets immediately (no coldkey data yet)
-      const initialResults = scoreWhales(subnets, pools, meta, {});
+      const initialResults = scoreWhales(subnets, pools, meta, {}, taoUsdPrice);
       setScored(initialResults);
       setTs(new Date());
 
@@ -258,12 +259,12 @@ export default function WhaleScanner() {
       const coldkeyMap = await fetchColdkeyDistributionMap(netuids, (progress) => {
         setColdkeyProgress({ completed: progress.completed, total: progress.total, failed: progress.failed });
         // Incrementally update the table as batches complete
-        const results = scoreWhales(subnets, pools, meta, progress.map);
+        const results = scoreWhales(subnets, pools, meta, progress.map, taoUsdPrice);
         setScored(results);
       });
 
       // Final re-score with complete coldkey data
-      const results = scoreWhales(subnets, pools, meta, coldkeyMap);
+      const results = scoreWhales(subnets, pools, meta, coldkeyMap, taoUsdPrice);
       setScored(results);
       setTs(new Date());
 
@@ -282,9 +283,9 @@ export default function WhaleScanner() {
       clearTimeout(timerRef.current);
       timerRef.current = setTimeout(scan, 15 * 60 * 1000);
     }
-  }, [auto]);
+  }, [auto, refreshTaoStats, refreshTaoUsdPrice]);
 
-  useEffect(() => { scan(); }, []);
+  useEffect(() => { scan(); }, [scan]);
   useEffect(() => {
     if (!auto) clearTimeout(timerRef.current);
     return () => clearTimeout(timerRef.current);
@@ -325,6 +326,9 @@ export default function WhaleScanner() {
       case "top10Pct": av = a.top10Pct; bv = b.top10Pct; break;
       case "impactPct": av = a.impactPct; bv = b.impactPct; break;
       case "flags": av = a.flags.length; bv = b.flags.length; break;
+      case "si": av = a.si ?? -1; bv = b.si ?? -1; break;
+      case "change1M": av = a.change1M ?? -Infinity; bv = b.change1M ?? -Infinity; break;
+      case "emissionPerCap": av = a.emissionPerCap ?? -Infinity; bv = b.emissionPerCap ?? -Infinity; break;
       case "name": return sortDir === "asc" ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
       default: av = a.whaleScore; bv = b.whaleScore;
     }
@@ -457,6 +461,9 @@ export default function WhaleScanner() {
                 <th style={{ ...S.th("top10Pct"), width: "62px" }} onClick={() => handleSort("top10Pct")}>TOP 10%{sortArrow("top10Pct")}</th>
                 <th style={{ ...S.th("impactPct"), width: "68px" }} onClick={() => handleSort("impactPct")}>IMPACT{sortArrow("impactPct")}</th>
                 <th style={{ ...S.th("flags"), width: "90px" }} onClick={() => handleSort("flags")}>FLAGS{sortArrow("flags")}</th>
+                <th style={{ ...S.th("si"), width: "50px" }} onClick={() => handleSort("si")} title="Sentiment index (fear/greed), 0-100">SI{sortArrow("si")}</th>
+                <th style={{ ...S.th("change1M"), width: "56px" }} onClick={() => handleSort("change1M")}>1M{sortArrow("change1M")}</th>
+                <th style={{ ...S.th("emissionPerCap"), width: "60px" }} onClick={() => handleSort("emissionPerCap")} title="emissionSharePct / marketCapUsdMillions">EPC{sortArrow("emissionPerCap")}</th>
                 <th style={{ ...S.th(""), width: "30px" }}></th>
               </tr>
             </thead>
@@ -494,6 +501,11 @@ export default function WhaleScanner() {
                           ? s.flags.map((f, fi) => <FlagBadge key={fi} flag={f} />)
                           : <span style={{ color: "#1e1e30", fontSize: "10px" }}>{"\u2014"}</span>
                         }
+                      </td>
+                      <td style={{ ...S.cell, color: s.si == null ? "#1a1a2e" : s.si >= 60 ? "#33bb66" : s.si < 55 ? "#ff6644" : "#ddaa00" }}>{s.si != null ? s.si.toFixed(0) : "\u2014"}</td>
+                      <td style={{ ...S.cell, color: s.change1M == null ? "#1a1a2e" : s.change1M > 0 ? "#33bb66" : "#cc3333" }}>{s.change1M != null ? `${s.change1M >= 0 ? "+" : ""}${s.change1M.toFixed(1)}%` : "\u2014"}</td>
+                      <td style={{ ...S.cell, color: s.epcTier === "suspect" ? "#ff6644" : s.epcTier === "healthy" ? "#33bb66" : s.epcTier === "elevated" ? "#ddaa00" : "#666688", fontWeight: s.epcTier === "suspect" || s.epcTier === "healthy" ? 700 : 400 }}>
+                        {s.emissionPerCap != null ? `${s.emissionPerCap.toFixed(2)}${s.epcTier === "suspect" ? " \u26A0" : ""}` : "\u2014"}
                       </td>
                       <td style={{ ...S.cell, color: "#1a1a2e", fontSize: "9px" }}>{isExpanded ? "\u25BC" : "\u25B6"}</td>
                     </tr>

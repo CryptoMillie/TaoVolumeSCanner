@@ -4,6 +4,10 @@ import { fetchMechDataMap } from "./sri/api.js";
 import { scoreHealth } from "./health/scoring.js";
 import { HEALTH_DIMENSION_LABELS, HEALTH_TIER_CONFIG } from "./health/constants.js";
 
+function epcColor(tier) {
+  return tier === "suspect" ? "#ff6644" : tier === "healthy" ? "#33bb66" : tier === "elevated" ? "#ddaa00" : "#666688";
+}
+
 function SubnetLogo({ url, name }) {
   const [errored, setErrored] = useState(false);
   if (!url || errored) return null;
@@ -46,7 +50,7 @@ function tierColor(val) {
 function ExpandedRow({ item }) {
   return (
     <tr>
-      <td colSpan={8} style={{ padding: "0" }}>
+      <td colSpan={11} style={{ padding: "0" }}>
         <div style={{ padding: "12px 18px 12px 40px", background: "#0a0a14", borderBottom: "1px solid #131326" }}>
           <div style={{ display: "flex", gap: "28px", flexWrap: "wrap" }}>
             {Object.entries(HEALTH_DIMENSION_LABELS).map(([key, label]) => {
@@ -145,32 +149,42 @@ function MethodologySection() {
 }
 
 export default function HealthScanner() {
-  const { refreshTaoStats } = useSharedData();
+  const { refreshTaoStats, refreshTaoUsdPrice } = useSharedData();
   const [scored, setScored] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
   const [ts, setTs] = useState(null);
   const [expanded, setExpanded] = useState({});
+  const [sortCol, setSortCol] = useState(null);
+  const [sortAsc, setSortAsc] = useState(false);
 
   const scan = useCallback(async () => {
     setLoading(true);
     setErr(null);
     try {
-      const { subnets, pools, meta } = await refreshTaoStats();
+      const [{ subnets, pools, meta }, taoUsdPrice] = await Promise.all([
+        refreshTaoStats(),
+        refreshTaoUsdPrice(),
+      ]);
       const mechDataMap = await fetchMechDataMap(subnets);
-      const results = scoreHealth(subnets, pools, meta, mechDataMap);
+      const results = scoreHealth(subnets, pools, meta, mechDataMap, taoUsdPrice);
       setScored(results);
       setTs(new Date());
     } catch (e) {
       setErr(e.message);
     }
     setLoading(false);
-  }, []);
+  }, [refreshTaoStats, refreshTaoUsdPrice]);
 
-  useEffect(() => { scan(); }, []);
+  useEffect(() => { scan(); }, [scan]);
 
   const toggleExpand = (netuid) => {
     setExpanded(prev => ({ ...prev, [netuid]: !prev[netuid] }));
+  };
+
+  const toggleSort = (col) => {
+    if (sortCol === col) setSortAsc(a => !a);
+    else { setSortCol(col); setSortAsc(false); }
   };
 
   const counts = {
@@ -180,6 +194,17 @@ export default function HealthScanner() {
     red: scored.filter(s => s.tier === "red").length,
     withEmission: scored.filter(s => s.hasEmission).length,
   };
+
+  let display = scored;
+  if (sortCol) {
+    display = [...scored].sort((a, b) => {
+      const av = a[sortCol], bv = b[sortCol];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return sortAsc ? av - bv : bv - av;
+    });
+  }
 
   const TC = HEALTH_TIER_CONFIG;
 
@@ -260,10 +285,13 @@ export default function HealthScanner() {
                 <th style={{ ...S.th, width: "80px" }}>D2 MARKET</th>
                 <th style={{ ...S.th, width: "80px" }}>D3 STABLE</th>
                 <th style={{ ...S.thLeft, width: "60px" }}>EMISSION</th>
+                <th style={{ ...S.th, width: "50px", cursor: "pointer" }} onClick={() => toggleSort("si")} title="Sentiment index (fear/greed), 0-100">SI{sortCol==="si"?(sortAsc?" ▲":" ▼"):""}</th>
+                <th style={{ ...S.th, width: "56px", cursor: "pointer" }} onClick={() => toggleSort("change1M")}>1M{sortCol==="change1M"?(sortAsc?" ▲":" ▼"):""}</th>
+                <th style={{ ...S.th, width: "60px", cursor: "pointer" }} onClick={() => toggleSort("emissionPerCap")} title="emissionSharePct / marketCapUsdMillions — click to sort descending">EPC{sortCol==="emissionPerCap"?(sortAsc?" ▲":" ▼"):""}</th>
               </tr>
             </thead>
             <tbody>
-              {scored.map((s, i) => {
+              {display.map((s, i) => {
                 const tierCfg = TC[s.tier];
                 const isExpanded = expanded[s.netuid];
                 const rowBg = s.tier === "red"
@@ -293,6 +321,11 @@ export default function HealthScanner() {
                         <span style={{ color: s.hasEmission ? "#33bb66" : "#333355", fontSize: "10px" }}>
                           {s.hasEmission ? "\u25CF" : "\u25CB"}
                         </span>
+                      </td>
+                      <td style={{ ...S.cell, color: s.si == null ? "#1a1a2e" : s.si >= 60 ? "#33bb66" : s.si < 55 ? "#ff6644" : "#ddaa00" }}>{s.si != null ? s.si.toFixed(0) : "\u2014"}</td>
+                      <td style={{ ...S.cell, color: s.change1M == null ? "#1a1a2e" : s.change1M > 0 ? "#33bb66" : "#cc3333" }}>{s.change1M != null ? `${s.change1M >= 0 ? "+" : ""}${s.change1M.toFixed(1)}%` : "\u2014"}</td>
+                      <td style={{ ...S.cell, color: epcColor(s.epcTier), fontWeight: s.epcTier === "suspect" || s.epcTier === "healthy" ? 700 : 400 }}>
+                        {s.emissionPerCap != null ? `${s.emissionPerCap.toFixed(2)}${s.epcTier === "suspect" ? " \u26A0" : ""}` : "\u2014"}
                       </td>
                     </tr>
                     {isExpanded && <ExpandedRow item={s} />}

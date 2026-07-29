@@ -160,7 +160,7 @@ function ErrorList({ errors }) {
 }
 
 export default function AlphaScanner() {
-  const { refreshTaoStats } = useSharedData();
+  const { refreshTaoStats, refreshTaoUsdPrice } = useSharedData();
   const [loading, setLoading] = useState(false);
   const [ts, setTs] = useState(null);
   const [errors, setErrors] = useState([]);
@@ -184,9 +184,10 @@ export default function AlphaScanner() {
     setErrors([]);
     try {
       // Fetch CoinGecko + Desearch and TaoStats (for subnet names) in parallel
-      const [data, tsData] = await Promise.all([
+      const [data, tsData, taoUsdPrice] = await Promise.all([
         fetchAllAlphaData(),
-        refreshTaoStats().catch(() => ({ pools: [], meta: {} })),
+        refreshTaoStats().catch(() => ({ pools: [], meta: {}, subnets: [] })),
+        refreshTaoUsdPrice().catch(() => null),
       ]);
       setErrors(data.errors);
 
@@ -208,7 +209,7 @@ export default function AlphaScanner() {
       // ─── CoinGecko Bittensor coins (with TaoStats name resolution) ───
       const btCoins = data.bittensorCoins;
       if (Array.isArray(btCoins) && btCoins.length > 0) {
-        setAlphaScores(scoreAlphaSignals(btCoins, tsData.pools, tsData.meta));
+        setAlphaScores(scoreAlphaSignals(btCoins, tsData.pools, tsData.meta, tsData.subnets, taoUsdPrice));
       }
 
       // ─── CoinGecko meme coins ───
@@ -226,14 +227,17 @@ export default function AlphaScanner() {
       setErrors([{ source: "general", error: e.message }]);
     }
     setLoading(false);
-  }, [refreshTaoStats]);
+  }, [refreshTaoStats, refreshTaoUsdPrice]);
 
-  useEffect(() => { scan(); }, []);
+  useEffect(() => { scan(); }, [scan]);
 
   const sortedScores = [...alphaScores].sort((a, b) => {
     let aVal, bVal;
     if (sortBy === "composite") { aVal = a.composite; bVal = b.composite; }
     else if (ALPHA_DIMENSION_LABELS[sortBy]) { aVal = a.dimensions[sortBy]; bVal = b.dimensions[sortBy]; }
+    else if (sortBy === "si") { aVal = a.si ?? -1; bVal = b.si ?? -1; }
+    else if (sortBy === "change1M") { aVal = a.change1M ?? -Infinity; bVal = b.change1M ?? -Infinity; }
+    else if (sortBy === "emissionPerCap") { aVal = a.emissionPerCap ?? -Infinity; bVal = b.emissionPerCap ?? -Infinity; }
     else { aVal = a.composite; bVal = b.composite; }
     return sortDir === "desc" ? bVal - aVal : aVal - bVal;
   });
@@ -418,6 +422,9 @@ export default function AlphaScanner() {
                   <th style={S.th}>PRICE</th>
                   <th style={S.th}>24H</th>
                   <th style={S.th}>VOL/MC</th>
+                  <th style={S.th} onClick={() => toggleSort("si")} title="Sentiment index (fear/greed), 0-100">SI {sortBy === "si" ? (sortDir === "desc" ? "▼" : "▲") : ""}</th>
+                  <th style={S.th} onClick={() => toggleSort("change1M")}>1M {sortBy === "change1M" ? (sortDir === "desc" ? "▼" : "▲") : ""}</th>
+                  <th style={S.th} onClick={() => toggleSort("emissionPerCap")} title="emissionSharePct / marketCapUsdMillions (requires a taostats netuid match — n/a for coins without one)">EPC {sortBy === "emissionPerCap" ? (sortDir === "desc" ? "▼" : "▲") : ""}</th>
                 </tr>
               </thead>
               <tbody>
@@ -466,6 +473,11 @@ export default function AlphaScanner() {
                       </td>
                       <td style={{ ...S.cell, color: volMcColor, fontSize: "11px" }}>
                         {s.volMcRatio.toFixed(1)}%
+                      </td>
+                      <td style={{ ...S.cell, color: s.si == null ? "#333355" : s.si >= 60 ? "#33bb66" : s.si < 55 ? "#ff6644" : "#ddaa00", fontSize: "11px" }}>{s.si != null ? s.si.toFixed(0) : "—"}</td>
+                      <td style={{ ...S.cell, color: s.change1M == null ? "#333355" : s.change1M > 0 ? "#33bb66" : "#cc3333", fontSize: "11px" }}>{s.change1M != null ? `${s.change1M >= 0 ? "+" : ""}${s.change1M.toFixed(1)}%` : "—"}</td>
+                      <td style={{ ...S.cell, fontSize: "11px", color: s.epcTier === "suspect" ? "#ff6644" : s.epcTier === "healthy" ? "#33bb66" : s.epcTier === "elevated" ? "#ddaa00" : "#666688", fontWeight: s.epcTier === "suspect" || s.epcTier === "healthy" ? 700 : 400 }}>
+                        {s.emissionPerCap != null ? `${s.emissionPerCap.toFixed(2)}${s.epcTier === "suspect" ? " ⚠" : ""}` : "—"}
                       </td>
                     </tr>
                   );

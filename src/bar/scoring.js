@@ -4,8 +4,9 @@
 // reconciliation dev panel.
 
 import { applyGate, gapToBar, bufferAboveBar, effectiveSubnetCount, demandFromPriceAndBurn } from "../lib/gate.js";
+import { computeEmissionPerCap, poolMarketCapUsdMillions, classifyEmissionPerCap, classifyEmissionPerCapTrend } from "../lib/emissionPerCap.js";
 import { PANEL_A_RANGE, PANEL_B_RANGE, RECONCILIATION_DELTA_THRESHOLD } from "./constants.js";
-import { recordSnapshot, getPastRatio, getThetaChange } from "./thetaHistory.js";
+import { recordSnapshot, getPastRatio, getPastEmissionPerCap, getThetaChange } from "./thetaHistory.js";
 
 export function scoreBar(barInputs, { q, h }) {
   const withDemand = barInputs.rows.map((r) => ({
@@ -26,6 +27,20 @@ export function scoreBar(barInputs, { q, h }) {
 
   const effectiveCount = effectiveSubnetCount(gated.map((s) => s.share));
 
+  // Emission-per-cap (added 2026-07-29): emissionSharePct / marketCapUsdMillions,
+  // using the real on-chain emission share (not the client-computed gated
+  // share) as the numerator — this is the number taostats itself would show,
+  // per the brief's framing of "taostats shows emission share and market cap
+  // separately and never divides them."
+  const epcByNetuid = {};
+  gated.forEach((s) => {
+    const emissionSharePct = barInputs.totalOnChainEmission > 0
+      ? (s.onChainEmission / barInputs.totalOnChainEmission) * 100
+      : 0;
+    const marketCapUsdMillions = poolMarketCapUsdMillions(s.marketCap, barInputs.taoUsdPrice);
+    epcByNetuid[s.netuid] = computeEmissionPerCap(emissionSharePct, marketCapUsdMillions);
+  });
+
   // Persist this tempo's snapshot (internally gated on cadence — safe to call every render).
   const ratios = {};
   gated.forEach((s) => { ratios[s.netuid] = s.ratio; });
@@ -35,6 +50,7 @@ export function scoreBar(barInputs, { q, h }) {
     rankAtBar,
     effectiveCount,
     ratios,
+    emissionPerCap: epcByNetuid,
   });
 
   const rows = gated.map((s) => {
@@ -45,6 +61,15 @@ export function scoreBar(barInputs, { q, h }) {
       : 0;
     const reconciliationDelta = s.share - onChainShare;
 
+    const emissionPerCap = epcByNetuid[s.netuid];
+    const epcTier = classifyEmissionPerCap({ ratio: emissionPerCap, si: s.si, change1M: s.change1M });
+    const epcPastRatio24h = getPastEmissionPerCap(s.netuid, 24);
+    const epcTrend = classifyEmissionPerCapTrend({
+      pastRatio: epcPastRatio24h,
+      currentRatio: emissionPerCap,
+      priceChangePct: s.change1M,
+    });
+
     return {
       ...s,
       deltaR24h: pastRatio24h != null ? s.ratio - pastRatio24h : null,
@@ -54,6 +79,9 @@ export function scoreBar(barInputs, { q, h }) {
       onChainShare,
       reconciliationDelta,
       reconciliationFlagged: Math.abs(reconciliationDelta) > RECONCILIATION_DELTA_THRESHOLD,
+      emissionPerCap,
+      epcTier,
+      epcTrend,
     };
   });
 
@@ -107,6 +135,10 @@ export function sortRows(rows, mode) {
         .sort((a, b) => a.deltaR24h - b.deltaR24h);
     case "elasticity":
       return [...active].sort((a, b) => b.elasticity - a.elasticity);
+    case "epc":
+      return [...active]
+        .filter((r) => r.emissionPerCap != null)
+        .sort((a, b) => b.emissionPerCap - a.emissionPerCap);
     case "distance":
     default:
       return [...active].sort((a, b) => Math.abs(a.ratio - 1) - Math.abs(b.ratio - 1));

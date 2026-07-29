@@ -1,6 +1,7 @@
 // Gem Scanner Scoring Engine — Dev Activity vs Market Cap composite
 
 import { GEM_WEIGHTS, GEM_TIER_THRESHOLDS } from "./constants.js";
+import { annotateEmissionPerCap } from "../lib/emissionPerCap.js";
 
 function num(v) {
   if (v == null) return 0;
@@ -44,7 +45,7 @@ function median(arr) {
  * Score all subnets with Gem Score.
  * devActivityMap comes from TaoStats /api/dev_activity/latest/v1, keyed by netuid.
  */
-export function scoreGems(subnets, pools, meta, devActivityMap, coinGecko) {
+export function scoreGems(subnets, pools, meta, devActivityMap, coinGecko, taoUsdPrice = null) {
   const subnetArr = Array.isArray(subnets) ? subnets : (subnets?.data || []);
   const poolArr = Array.isArray(pools) ? pools : (pools?.data || []);
 
@@ -54,6 +55,8 @@ export function scoreGems(subnets, pools, meta, devActivityMap, coinGecko) {
     const id = p.netuid ?? p.subnet_id;
     if (id != null) poolMap[id] = p;
   });
+
+  const totalRealEmission = subnetArr.reduce((sum, s) => sum + num(s.emission), 0);
 
   // Build CoinGecko lookup: "sn{id}" symbol -> market data
   const cgMap = {};
@@ -119,6 +122,7 @@ export function scoreGems(subnets, pools, meta, devActivityMap, coinGecko) {
       priceChange24h,
       poolTao,
       volMcRatio,
+      ...annotateEmissionPerCap(s, pool, totalRealEmission, taoUsdPrice),
     };
   }).filter(item => item.marketCap > 0 || item.commits7d > 0);
 
